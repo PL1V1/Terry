@@ -15,6 +15,11 @@ export interface RoomDeps {
   rest: MessageTransport;
   caps: Capabilities;
   botId: string;
+  /**
+   * Every id that counts as addressing this bot: its user id plus its managed
+   * role ids. Read through a callback because role discovery is asynchronous.
+   */
+  selfMentionIds: () => ReadonlySet<string>;
   /** Reports this room's activity so the service can drive presence. */
   onActivity: (state: ServiceState, activity: string | null) => void;
 }
@@ -73,8 +78,17 @@ export class RoomController {
   // ---------------------------------------------------------------- dispatch
 
   async handleMessage(message: DiscordMessage): Promise<void> {
-    const parsed = parseInput(message.content ?? "", this.deps.botId);
-    if (!parsed.mentioned) return;
+    const parsed = parseInput(message.content ?? "", this.deps.selfMentionIds());
+    if (!parsed.mentioned) {
+      // Logged deliberately. A silently dropped message is indistinguishable
+      // from a dead service, and that costs an hour of somebody's afternoon.
+      log.debug("message not addressed to this bot", {
+        channelId: this.channelId,
+        messageId: message.id,
+        empty: (message.content ?? "").length === 0,
+      });
+      return;
+    }
 
     if (parsed.command) {
       await this.handleCommand(parsed.command, message);

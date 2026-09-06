@@ -27,7 +27,11 @@ export interface ParsedInput {
   text: string;
 }
 
-const MENTION = /^\s*<@!?(\d+)>\s*/;
+// <@id> is a user mention, <@!id> a nickname mention, <@&id> a ROLE mention.
+// Discord creates a managed role named after a bot when it is invited, and its
+// autocomplete offers that role alongside the bot user. Both render as the same
+// "@Name" on screen, so refusing the role form just makes the bot look broken.
+const MENTION = /^\s*<@[!&]?(\d+)>\s*/;
 
 /**
  * Parses one Discord message.
@@ -35,13 +39,18 @@ const MENTION = /^\s*<@!?(\d+)>\s*/;
  * Commands are matched only when the bot is addressed directly, so ordinary
  * conversation that happens to contain the word "sleep" is never treated as an
  * instruction to the service.
+ *
+ * `self` is every id that counts as addressing this bot: its user id, plus the
+ * ids of the managed roles Discord created for it. Only those are accepted, so a
+ * mention of some other role is still ordinary chat.
  */
-export function parseInput(content: string, botId: string): ParsedInput {
+export function parseInput(content: string, self: string | ReadonlySet<string>): ParsedInput {
+  const selfIds = typeof self === "string" ? new Set([self]) : self;
   let text = content ?? "";
   let mentioned = false;
 
   const match = MENTION.exec(text);
-  if (match && match[1] === botId) {
+  if (match && selfIds.has(match[1]!)) {
     mentioned = true;
     text = text.slice(match[0].length);
   }

@@ -72,7 +72,15 @@ function harness() {
 
   const build = (): RoomController =>
     new RoomController(
-      { config: CONFIG, repo, rest: transport, caps: CAPS, botId: BOT, onActivity: () => {} },
+      {
+        config: CONFIG,
+        repo,
+        rest: transport,
+        caps: CAPS,
+        botId: BOT,
+        selfMentionIds: () => new Set([BOT]),
+        onActivity: () => {},
+      },
       GUILD,
       CHANNEL,
     );

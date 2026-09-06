@@ -139,6 +139,18 @@ export class Rest implements MessageTransport {
     );
   }
 
+  /** Guilds this bot is a member of. */
+  async botGuilds(): Promise<Array<{ id: string; name: string }>> {
+    return this.request("GET", "/users/@me/guilds");
+  }
+
+  /** Roles in a guild, including the managed roles Discord creates for bots. */
+  async guildRoles(
+    guildId: string,
+  ): Promise<Array<{ id: string; name: string; tags?: { bot_id?: string } }>> {
+    return this.request("GET", `/guilds/${guildId}/roles`);
+  }
+
   /** Most recent messages first, as Discord returns them. */
   async recentMessages(channelId: string, limit: number): Promise<unknown[]> {
     return this.request<unknown[]>("GET", `/channels/${channelId}/messages?limit=${Math.min(limit, 100)}`);

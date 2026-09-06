@@ -24,6 +24,8 @@ const OPERATOR = "777777777777777777";
 const GUILD = "444444444444444444";
 const CHANNEL = "555555555555555555";
 const OTHER_CHANNEL = "666666666666666666";
+/** The managed role Discord creates for the bot. */
+const BOT_ROLE = "999999999999999999";
 
 const HELP = `Options:
   --effort <level>       Effort level (low, medium, high, xhigh, max)
@@ -110,6 +112,7 @@ function harness(): Harness {
         rest: transport,
         caps: CAPS,
         botId: BOT,
+        selfMentionIds: () => new Set([BOT, BOT_ROLE]),
         onActivity: (state, text) => activity.push({ state, activity: text }),
       },
       GUILD,

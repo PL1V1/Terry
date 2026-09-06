@@ -68,3 +68,28 @@ describe("parseCommand", () => {
     expect(parseCommand("")).toBeNull();
   });
 });
+
+describe("role mentions", () => {
+  const ROLE = "999999999999999999";
+  const SELF = new Set([BOT, ROLE]);
+
+  test("a mention of the bot's own managed role addresses the bot", () => {
+    // Discord renders <@&roleId> identically to <@botId>. Both are "@Terry".
+    const result = parseInput(`<@&${ROLE}> wakeup`, SELF);
+    expect(result.mentioned).toBe(true);
+    expect(result.command?.name).toBe("wakeup");
+  });
+
+  test("a user mention still works alongside it", () => {
+    expect(parseInput(`<@${BOT}> status`, SELF).command?.name).toBe("status");
+  });
+
+  test("some other role is not us", () => {
+    expect(parseInput(`<@&${OTHER}> sleep`, SELF).mentioned).toBe(false);
+  });
+
+  test("a bare string self id is still accepted", () => {
+    expect(parseInput(`<@${BOT}> ping`, BOT).command?.name).toBe("ping");
+    expect(parseInput(`<@&${ROLE}> ping`, BOT).mentioned).toBe(false);
+  });
+});

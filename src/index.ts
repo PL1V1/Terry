@@ -105,6 +105,26 @@ async function main(): Promise<void> {
   let botId = config.applicationId;
   let aggregator: PresenceAggregator | null = null;
 
+  // Discord auto-creates a managed role per bot, and mentioning that role looks
+  // identical to mentioning the bot. Both must count as addressing us.
+  const selfRoleIds = new Set<string>();
+  const selfMentionIds = (): ReadonlySet<string> => new Set([botId, ...selfRoleIds]);
+
+  async function discoverSelfRoles(): Promise<void> {
+    try {
+      for (const guild of await rest.botGuilds()) {
+        if (config.allowedGuilds.size > 0 && !config.allowedGuilds.has(guild.id)) continue;
+        for (const role of await rest.guildRoles(guild.id)) {
+          if (role.tags?.bot_id === botId) selfRoleIds.add(role.id);
+        }
+      }
+      log.info("self mention ids resolved", { botId, roleIds: [...selfRoleIds] });
+    } catch (error) {
+      // Not fatal: the bot still answers a direct user mention.
+      log.warn("could not resolve this bot's role ids; role mentions will be ignored", { error });
+    }
+  }
+
   const gateway = new Gateway(config.token, {
     onConnectionState: (state) => {
       log.info("gateway state", { state });
@@ -114,6 +134,7 @@ async function main(): Promise<void> {
     onReady: (data) => {
       botId = data.user.id;
       log.info("gateway ready", { botId });
+      void discoverSelfRoles();
       // A restart returns every room to asleep unless it was left awake, which
       // the database remembers; nothing is resumed without a mapping.
       aggregator?.connection("ready");
@@ -152,6 +173,7 @@ async function main(): Promise<void> {
           rest,
           caps,
           botId,
+          selfMentionIds,
           onActivity: (state, activity) => aggregator?.report(key, state, activity),
         },
         guildId,
