@@ -581,10 +581,14 @@ export class RoomController {
     if (!this.running && !this.session?.isRunning) {
       return this.say("Nothing running. Still awake.");
     }
-    await this.session?.stop();
-    this.session = null;
+    await this.session?.interrupt();
+    // An in-band interrupt leaves the process warm for the next turn. Only a
+    // runtime that had to be terminated is dropped here.
+    if (!this.session?.isRunning) {
+      this.session = null;
+      this.activeSettings = null;
+    }
     this.running = false;
-    this.activeSettings = null;
     this.setState("awake");
     await this.say(
       [
@@ -696,8 +700,19 @@ export class RoomController {
 
     if (this.session?.isRunning && !settingsChanged) return this.session;
 
+    // A running process is asked to switch first. Model and permission mode
+    // change in-band; anything the protocol cannot do falls through to the
+    // restart below, which is what every change used to cost.
+    if (this.session?.isRunning && settingsChanged) {
+      if (await this.session.applySettings({ model, effort, permissionMode })) {
+        log.info("applied new settings in-process", { channelId: this.channelId, model, effort, permissionMode });
+        this.activeSettings = { model, effort, permissionMode };
+        return this.session;
+      }
+    }
+
     if (this.session) {
-      log.info("restarting runtime to apply new settings", { channelId: this.channelId, model, effort });
+      log.info("restarting runtime to apply new settings", { channelId: this.channelId, model, effort, permissionMode });
       await this.session.stop();
     }
 
@@ -719,6 +734,7 @@ export class RoomController {
       permissionMode,
       permissionPrompts: this.deps.config.permissionPrompts,
       partial: this.streamingCapable(),
+      interruptGraceMs: this.deps.config.interruptGraceMs,
       onEvent: (event) => {
         if (event.kind === "text-delta") this.stream?.append(event.text);
         if (event.kind === "tool-use") this.stream?.ticker(tickerFor(event.name, event.input));

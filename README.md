@@ -109,8 +109,10 @@ Anything else addressed to Terry while awake is a turn in the conversation.
 While asleep, ordinary chat is ignored entirely — only the commands answer.
 
 Model and effort changes apply to the **next** turn. Work already running is
-never silently switched underneath you. Changing either restarts the runtime
-process and resumes the same conversation by id, so no context is lost.
+never silently switched underneath you. A model change is applied to the running
+process in-band, with no restart; an effort change restarts the runtime and
+resumes the same conversation by id, because the runtime has no in-band effort
+switch. Either way no context is lost.
 
 ## Presence
 
@@ -314,9 +316,8 @@ Peers are not operators and the two lists are separate. Adding a peer does not
 grant it anything an operator has — **including runtime authority**.
 `PERMISSION_MODE` belongs to the service rather than to whoever is talking, so a
 peer turn runs at `PEER_PERMISSION_MODE` instead, which defaults to `plan`: a
-peer can read and reason, and cannot write. Switching between the two restarts
-the runtime and resumes the same conversation by id, exactly as a model change
-does.
+peer can read and reason, and cannot write. Switching between the two is an
+in-band message to the running process, not a restart.
 
 ## Security posture
 

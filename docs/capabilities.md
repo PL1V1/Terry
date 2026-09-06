@@ -79,10 +79,12 @@ new message with code fences kept balanced. Peer turns and overheard turns are
 posted whole instead — a mention added by edit notifies nobody, and a placeholder
 would already be a reply to something that may not be for him.
 
-**Interruption.** The runtime has no in-band interrupt, so `stop` and `sleep` kill
-the process. A turn killed mid-sentence may already have produced partial output;
-that output is **discarded**, because posting it after "Task interrupted" would
-contradict the message the operator has just read. Stop means stop.
+**Interruption.** `stop` asks the runtime to interrupt in-band and keeps the
+process warm for the next turn; a runtime that does not stop within
+`INTERRUPT_GRACE_MS` is killed instead. `sleep` always stops the process. Either
+way, output produced before the interruption is **discarded**, because posting
+it after "Task interrupted" would contradict the message the operator has just
+read. Stop means stop.
 
 ### Ambient listening
 
@@ -131,9 +133,11 @@ of step with reality. Permission settings are validated against the choices the
 runtime actually advertises.
 
 **Model and effort** are per room, settable from Discord, and apply to the **next**
-turn. Work already running is never switched underneath you. Changing either
-restarts the runtime process and resumes the same conversation by id, so no
-context is lost.
+turn. Work already running is never switched underneath you. A model change is
+applied to the running process in-band; an effort change restarts the runtime and
+resumes the same conversation by id, because the runtime offers no in-band effort
+switch. No context is lost either way. A switch the runtime refuses falls back to
+a restart.
 
 **Create versus resume.** The runtime rejects the wrong verb — `--session-id` for
 an id it already knows, `--resume` for one it does not. Terry records in the
@@ -239,8 +243,8 @@ Peers and operators are separate lists. Adding a peer grants it nothing an
 operator has — including runtime authority. `PERMISSION_MODE` belongs to the
 service rather than to whoever is talking, so a peer turn runs at
 `PEER_PERMISSION_MODE` instead, which defaults to `plan`: a peer can read and
-reason, and cannot write. Switching between the two restarts the runtime and
-resumes the same conversation by id, exactly as a model change does.
+reason, and cannot write. Switching between the two is an in-band message to
+the running process, not a restart.
 
 ---
 
@@ -359,6 +363,7 @@ bun run migrate:down     # roll back the most recent
 | `HISTORY_LIMIT` | Background context messages. Default 25. |
 | `STREAMING` | Show a reply growing in place. Default on; `off` restores post-at-end. |
 | `STREAM_EDIT_INTERVAL_MS` | Minimum gap between streaming edits. Default 1500. |
+| `INTERRUPT_GRACE_MS` | How long an interrupted turn may take to stop before the process is killed. Default 3000. |
 | `ATTENTION_WINDOW_SECONDS` | How long an awake room keeps listening after being spoken to. Default 90; 0 disables. |
 | `RESUME_AWAKE_ON_RESTART` | Whether a restart leaves awake rooms awake. Default off. |
 | `DATABASE_PATH` | Default `./data/terry.sqlite`. |

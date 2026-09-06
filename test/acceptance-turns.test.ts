@@ -251,18 +251,19 @@ describe("acceptance 5 and 6 — settings reach the process and survive a restar
     await h.shutdown();
   });
 
-  test("changing model mid-conversation restarts the process and resumes", async () => {
+  test("changing model mid-conversation switches in-process, without a restart", async () => {
     const h = harness();
     await h.say("wakeup");
     await h.say("first");
     expect(h.transport.last).toContain("model=none");
+    const firstPid = /pid=([0-9]+)/.exec(h.transport.last)?.[1];
 
     await h.say("model opus");
     await h.say("second");
 
     expect(h.transport.last).toContain("model=opus");
-    // Restarting to apply a setting must resume, never start a blank one.
-    expect(h.transport.last).toContain("resumed=true");
+    // The protocol switches the model in place: same process, no cold start.
+    expect(/pid=([0-9]+)/.exec(h.transport.last)?.[1]).toBe(firstPid!);
     await h.shutdown();
   });
 

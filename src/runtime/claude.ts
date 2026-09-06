@@ -28,6 +28,14 @@ export interface TurnOutcome {
   usage?: TurnUsage;
 }
 
+/** The runtime s answer to a control request. */
+export interface ControlResult {
+  ok: boolean;
+  /** "timeout", "not-running", or the runtime s own message. */
+  error?: string;
+  response?: unknown;
+}
+
 export interface SessionOptions {
   bin: string;
   cwd: string;
@@ -42,6 +50,11 @@ export interface SessionOptions {
   permissionPrompts: string;
   /** Ask for text as it is generated, so a reply can be shown growing. */
   partial: boolean;
+  /**
+   * How long to wait for an in-band interrupt to take effect before the process
+   * is terminated instead. The kill is the fallback, not the method.
+   */
+  interruptGraceMs: number;
   onEvent: (event: RuntimeEvent) => void;
 }
 
@@ -61,6 +74,11 @@ export class ClaudeSession {
   private blockType: string | null = null;
   /** Text blocks seen this turn, so a second one is separated from the first. */
   private textBlocks = 0;
+  /** Answers awaited from control requests, by request id. */
+  private readonly pending = new Map<string, (r: ControlResult) => void>();
+  private controlSeq = 0;
+  /** Set while an interrupt is in flight, so the turn it lands on reports as interrupted. */
+  private interrupting = false;
 
   private handler: (event: RuntimeEvent) => void;
 
@@ -173,6 +191,15 @@ export class ClaudeSession {
       return;
     }
 
+    if (type === "control_response") {
+      const r = event.response as { request_id?: string; subtype?: string; error?: string; response?: unknown } | undefined;
+      const resolve = r?.request_id ? this.pending.get(r.request_id) : undefined;
+      if (resolve) {
+        resolve(r?.subtype === "success" ? { ok: true, response: r.response } : { ok: false, error: r?.error ?? "error" });
+      }
+      return;
+    }
+
     if (type === "stream_event") {
       // The runtime wraps the API stream; only text deltas are of interest here.
       // Thinking and tool-input deltas are ignored, and the complete assistant
@@ -260,6 +287,11 @@ export class ClaudeSession {
           base(event);
           if (event.kind === "assistant-text") {
             collected.push(event.text);
+          } else if (event.kind === "result" && this.interrupting) {
+            // Stop means stop: whatever the runtime produced before it honoured
+            // the interrupt is discarded, the same as when it had to be killed.
+            this.interrupting = false;
+            settle({ ok: false, text: null, reason: "interrupted" });
           } else if (event.kind === "result") {
             settle({
               ok: event.ok,
@@ -303,11 +335,86 @@ export class ClaudeSession {
    * stream-json input channel, so this terminates the process; the conversation
    * itself is untouched and the next turn resumes it by id.
    */
+  /**
+   * Interrupts the current turn.
+   *
+   * The stream-json channel accepts an in-band interrupt, so the turn is asked
+   * to stop and the process stays warm for the next one. A runtime that does not
+   * honour it within the grace period is terminated instead; the conversation
+   * is untouched either way and the next turn resumes it by id.
+   */
   async interrupt(): Promise<void> {
     if (!this.isRunning) return;
+    if (!this.busy) return;
+    this.interrupting = true;
     log.info("interrupting coding runtime", { sessionId: this.opts.sessionId });
+
+    const asked = await this.control("interrupt", {}, 2_000);
+    if (asked.ok) {
+      const deadline = Date.now() + this.opts.interruptGraceMs;
+      while (this.busy && Date.now() < deadline) await Bun.sleep(25);
+      if (!this.busy) {
+        log.info("runtime interrupted in-process", { sessionId: this.opts.sessionId });
+        return;
+      }
+    }
+
+    log.warn("interrupt not honoured; terminating runtime", {
+      sessionId: this.opts.sessionId,
+      reason: asked.ok ? "grace expired" : asked.error,
+    });
+    this.interrupting = false;
     await this.stop();
   }
+
+  /** Sends a control request and waits for the answer, or a timeout. */
+  async control(subtype: string, params: Record<string, unknown> = {}, timeoutMs = 3_000): Promise<ControlResult> {
+    if (!this.isRunning || !this.stdin) return { ok: false, error: "not-running" };
+    this.controlSeq += 1;
+    const id = `c${this.controlSeq}`;
+    const answer = new Promise<ControlResult>((resolve) => {
+      this.pending.set(id, resolve);
+    });
+    this.stdin.write(JSON.stringify({ type: "control_request", request_id: id, request: { subtype, ...params } }) + "\n");
+    await this.stdin.flush();
+    const timeout = Bun.sleep(timeoutMs).then((): ControlResult => ({ ok: false, error: "timeout" }));
+    const result = await Promise.race([answer, timeout]);
+    this.pending.delete(id);
+    return result;
+  }
+
+  /**
+   * Applies new settings to the running process where the protocol allows it.
+   *
+   * Model and permission mode switch in-process. Effort does not - the installed
+   * runtime reports set_effort unsupported - so an effort change returns false
+   * and the caller restarts, exactly as every change used to. False always
+   * means "restart", never "ignored".
+   */
+  async applySettings(next: { model: string | null; effort: string | null; permissionMode: string }): Promise<boolean> {
+    const o = this.opts;
+    if (next.effort !== o.effort) return false;
+    if (next.model !== o.model) {
+      // Reverting to the runtime s default is not expressible as a switch.
+      if (!next.model) return false;
+      const r = await this.control("set_model", { model: next.model });
+      if (!r.ok) {
+        log.warn("in-process model switch refused; restarting instead", { model: next.model, error: r.error });
+        return false;
+      }
+      o.model = next.model;
+    }
+    if (next.permissionMode !== o.permissionMode) {
+      const r = await this.control("set_permission_mode", { mode: next.permissionMode });
+      if (!r.ok) {
+        log.warn("in-process permission switch refused; restarting instead", { mode: next.permissionMode, error: r.error });
+        return false;
+      }
+      o.permissionMode = next.permissionMode;
+    }
+    return true;
+  }
+
 
   async stop(): Promise<void> {
     this.stopping = true;

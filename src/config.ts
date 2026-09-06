@@ -97,6 +97,11 @@ export interface Config {
   streaming: boolean;
   /** Minimum gap between edits to a streaming reply, so a busy turn cannot flood Discord. */
   streamEditIntervalMs: number;
+  /**
+   * How long an interrupted turn is given to stop on its own before the runtime
+   * process is terminated. The kill is the fallback, not the method.
+   */
+  interruptGraceMs: number;
   /** Optional file the service appends its own structured log to. */
   logFile: string | null;
 }
@@ -178,6 +183,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     logFile: env.LOG_FILE?.trim() || null,
     streaming: (env.STREAMING?.trim() ?? "on").toLowerCase() !== "off",
     streamEditIntervalMs: intOr("STREAM_EDIT_INTERVAL_MS", env, 1500),
+    interruptGraceMs: intOr("INTERRUPT_GRACE_MS", env, 3000),
   };
 
   // An empty allowlist is a configuration mistake, not an open door. Fail loudly
