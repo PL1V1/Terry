@@ -24,3 +24,8 @@ logs/
 # OS
 Thumbs.db
 .DS_Store
+
+# Instruction sources. The bodies live in the database, not the repo — these are
+# your own content, and the brief is explicit that no instruction catalogue gets
+# committed here.
+instructions/

@@ -376,8 +376,10 @@ export class RoomController {
     const sessionId = room.session_id ?? crypto.randomUUID();
     if (!room.session_id) this.deps.repo.setSession(this.guildId, this.channelId, sessionId);
 
-    // A conversation that has already produced a turn is resumed, not recreated.
-    const resume = this.historySent || settingsChanged;
+    // The runtime rejects --session-id for an id it already knows, and --resume
+    // for one it does not. The database remembers which applies, so this holds
+    // across a service restart rather than only within one process.
+    const resume = room.session_started === 1;
 
     const session = new ClaudeSession({
       bin: this.deps.config.claudeBin,
@@ -397,6 +399,9 @@ export class RoomController {
       },
     });
     session.start();
+    // The runtime registers the id as it starts, so from here on it must be
+    // resumed rather than recreated.
+    if (!resume) this.deps.repo.markSessionStarted(this.guildId, this.channelId);
     this.session = session;
     this.activeSettings = { model, effort };
     return session;

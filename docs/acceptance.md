@@ -162,6 +162,21 @@ Confirmed again from the user's side after three service restarts: `wakeup`
 replied "Resuming this room's conversation 4aa58348-…" — the same id the room was
 given before any of them.
 
+**A second bug, found by asking whether this really worked.** The runtime
+distinguishes creating a conversation (`--session-id`) from continuing one
+(`--resume`) and rejects the wrong verb:
+
+    Error: Session ID e8f1d786-… is already in use.
+
+The service decided which to use from a flag held in memory, so after a restart
+it would try to *create* a conversation that already existed, and the first turn
+after every restart would have failed. Restart recovery — the headline feature —
+was broken in exactly the case it exists for.
+
+The decision is now a persisted column (`rooms.session_started`, migration 003),
+so it survives the restart it describes. The stub runtime now enforces the same
+rule, and the harness test was confirmed to fail against the old logic.
+
 Demonstrated 2026-09-06 against the running service. The room was awake with a
 mapped conversation; the service was stopped and restarted:
 

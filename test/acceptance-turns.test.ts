@@ -314,6 +314,9 @@ describe("acceptance 5 and 6 — settings reach the process and survive a restar
     await h.say("after restart");
     expect(h.repo.getRoom(GUILD, CHANNEL)!.session_id).toBe(sessionId);
     expect(h.transport.last).toContain("effort=max");
+    // The conversation already exists, so the restarted service must continue it
+    // rather than try to create it again.
+    expect(h.transport.last).toContain("resumed=true");
     await h.shutdown();
   });
 });

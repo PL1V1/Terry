@@ -14,6 +14,9 @@
  *   __FAIL__  reports an error result
  *   __CRASH__ exits without producing a result
  */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 function arg(name: string): string | null {
   const index = Bun.argv.indexOf(name);
   return index !== -1 ? (Bun.argv[index + 1] ?? null) : null;
@@ -23,6 +26,29 @@ const sessionId = arg("--session-id") ?? arg("--resume") ?? "fake-session";
 const model = arg("--model");
 const effort = arg("--effort");
 const resumed = Bun.argv.includes("--resume");
+
+/**
+ * The real CLI distinguishes creating a conversation from continuing one, and
+ * rejects the wrong verb: --session-id for an id it already knows fails with
+ * "Session ID is already in use", and --resume for one it does not know fails
+ * too. A stub that accepted either would let a restart bug through, so this one
+ * keeps a marker per session id and enforces the same rule.
+ */
+const stateDir = `${Bun.env.FAKE_RUNTIME_STATE ?? Bun.env.TEMP ?? "/tmp"}/terry-fake-runtime`;
+mkdirSync(stateDir, { recursive: true });
+const marker = join(stateDir, sessionId);
+
+if (resumed && !existsSync(marker)) {
+  process.stderr.write(`Error: No conversation found with session ID ${sessionId}.
+`);
+  process.exit(1);
+}
+if (!resumed && existsSync(marker)) {
+  process.stderr.write(`Error: Session ID ${sessionId} is already in use.
+`);
+  process.exit(1);
+}
+writeFileSync(marker, "");
 
 function emit(payload: Record<string, unknown>): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);

@@ -12,6 +12,8 @@ export interface Room {
   effort: string | null;
   activity_mode: ActivityMode;
   activity_text: string | null;
+  /** 1 once the runtime has actually created this conversation. */
+  session_started: number;
 }
 
 export interface RetiredSession {
@@ -44,7 +46,7 @@ export class Repo {
   getRoom(guildId: string, channelId: string): Room | null {
     return this.db
       .query<Room, [string, string]>(
-        `SELECT guild_id, channel_id, state, session_id, model, effort, activity_mode, activity_text
+        `SELECT guild_id, channel_id, state, session_id, model, effort, activity_mode, activity_text, session_started
          FROM rooms WHERE guild_id = ? AND channel_id = ?`,
       )
       .get(guildId, channelId);
@@ -63,8 +65,23 @@ export class Repo {
     this.update(guildId, channelId, "state", state);
   }
 
+  /**
+   * Points the room at a conversation id. A newly assigned id has not been
+   * created in the runtime yet, so the started flag resets with it.
+   */
   setSession(guildId: string, channelId: string, sessionId: string | null): void {
-    this.update(guildId, channelId, "session_id", sessionId);
+    this.db
+      .query(
+        `UPDATE rooms SET session_id = ?, session_started = 0,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE guild_id = ? AND channel_id = ?`,
+      )
+      .run(sessionId, guildId, channelId);
+  }
+
+  /** Records that the runtime has created this room's conversation. */
+  markSessionStarted(guildId: string, channelId: string): void {
+    this.update(guildId, channelId, "session_started", "1");
   }
 
   setModel(guildId: string, channelId: string, model: string | null): void {
@@ -107,7 +124,7 @@ export class Repo {
   awakeRooms(): Room[] {
     return this.db
       .query<Room, []>(
-        `SELECT guild_id, channel_id, state, session_id, model, effort, activity_mode, activity_text
+        `SELECT guild_id, channel_id, state, session_id, model, effort, activity_mode, activity_text, session_started
          FROM rooms WHERE state = 'awake'`,
       )
       .all();
