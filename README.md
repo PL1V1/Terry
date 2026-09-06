@@ -240,6 +240,26 @@ Two kinds of turn are deliberately **not** streamed:
 Needs a runtime that advertises `--include-partial-messages`. Without one,
 replies are posted whole and the log says so once.
 
+### How instructions reach the runtime
+
+A pinned conversation's instructions are delivered **once**, as an appended
+system prompt when the runtime process starts, written to
+`data/prompts/<conversation>.md` and passed by file. Inside every message they
+would accumulate in the conversation — the same text on every turn, paid for on
+every turn, pushing real history out of the window. A system prompt is sent once
+and cached.
+
+A system prompt cannot change in-band, so a change to the pinned set —
+`accept instructions`, or drift under policy `live` — is the one setting change
+that always restarts the process. It resumes the same conversation by id.
+
+Instructions travel inside the message instead when the drift policy is `off`
+(an unpinned room resolves live every turn), when
+`INSTRUCTIONS_IN_SYSTEM_PROMPT=off`, or when the runtime does not advertise
+`--append-system-prompt`. The log says which, once.
+
+The file on disk doubles as a record of exactly what each conversation was told.
+
 ## Ambient listening
 
 Terry answers a message that addresses him directly. He will also listen to what

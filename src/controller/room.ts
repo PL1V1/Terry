@@ -17,6 +17,8 @@ import {
 } from "./pins.ts";
 import { fetchHistory, renderHistory } from "./history.ts";
 import { log } from "../log.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface RoomDeps {
   config: Config;
@@ -56,7 +58,15 @@ export class RoomController {
   private queue: PendingTurn[] = [];
   private running = false;
   /** Model and effort the live process was started with. */
-  private activeSettings: { model: string | null; effort: string | null; permissionMode: string } | null = null;
+  private activeSettings: {
+    model: string | null;
+    effort: string | null;
+    permissionMode: string;
+    /** Hash of the appended system prompt the process was started with. */
+    systemPromptSha: string | null;
+  } | null = null;
+  /** Whether the system-prompt fallback has already been explained in the log. */
+  private systemPromptWarned = false;
   private awaitingNewSessionConfirm = false;
   /**
    * The newest message already given to the runtime as context. Null means the
@@ -201,6 +211,49 @@ export class RoomController {
       author,
       ambient,
     });
+  }
+
+
+  // ------------------------------------------------------ instruction delivery
+
+  /**
+   * Writes the system prompt for a conversation beside the database, one file
+   * per conversation, overwritten on every restart. It doubles as a record on
+   * disk of exactly what that conversation was told.
+   */
+  private writeSystemPromptFile(sessionId: string, text: string): string {
+    const dir = join(dirname(this.deps.config.databasePath), "prompts");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${sessionId}.md`);
+    writeFileSync(path, text);
+    return path;
+  }
+
+  /**
+   * Whether this turn\x27s instructions ride in the system prompt.
+   *
+   * They can when the operator has not turned it off, the room pins (an
+   * unpinned room resolves live every turn, and a system prompt cannot change
+   * per turn), and the runtime accepts the flag. Otherwise they travel inside
+   * the message, as they always did, and the log says why once.
+   *
+   * The runtime documents --append-system-prompt and its -file variant together;
+   * discovery sees the former, and the latter is what is used, because a
+   * multi-line prompt does not belong on a command line.
+   */
+  private deliverViaSystemPrompt(text: string): boolean {
+    if (!text) return false;
+    const { config, caps } = this.deps;
+    if (!config.instructionsInSystemPrompt || config.driftPolicy === "off") return false;
+    const reason = caps.flags.has("--append-system-prompt") ? null : "runtime does not advertise --append-system-prompt";
+    if (reason) {
+      if (!this.systemPromptWarned) {
+        this.systemPromptWarned = true;
+        log.warn("instructions will travel inside each message", { channelId: this.channelId, reason });
+      }
+      return false;
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------- streaming
@@ -691,33 +744,44 @@ export class RoomController {
    * are tried first; a restart resumes the same conversation by id, so changing
    * a setting costs context nothing either way.
    */
-  private async ensureSession(author: AuthorKind): Promise<ClaudeSession> {
+  private async ensureSession(author: AuthorKind, systemPrompt: string | null = null): Promise<ClaudeSession> {
     const room = this.room;
     const model = room.model ?? this.deps.config.defaultModel;
     const effort = room.effort ?? this.deps.config.defaultEffort;
     const permissionMode = this.permissionModeFor(author);
+    const systemPromptSha = systemPrompt ? hashBody(systemPrompt) : null;
 
+    const instructionsChanged = this.activeSettings !== null && this.activeSettings.systemPromptSha !== systemPromptSha;
     const settingsChanged =
       this.activeSettings !== null &&
       (this.activeSettings.model !== model ||
         this.activeSettings.effort !== effort ||
-        this.activeSettings.permissionMode !== permissionMode);
+        this.activeSettings.permissionMode !== permissionMode ||
+        instructionsChanged);
 
     if (this.session?.isRunning && !settingsChanged) return this.session;
 
     // A running process is asked to switch first. Model and permission mode
     // change in-band; anything the protocol cannot do falls through to the
     // restart below, which is what every change used to cost.
-    if (this.session?.isRunning && settingsChanged) {
+    // Nothing in the protocol can replace a system prompt, so a change to the
+    // pinned instructions is the one setting that always restarts.
+    if (this.session?.isRunning && settingsChanged && !instructionsChanged) {
       if (await this.session.applySettings({ model, effort, permissionMode })) {
         log.info("applied new settings in-process", { channelId: this.channelId, model, effort, permissionMode });
-        this.activeSettings = { model, effort, permissionMode };
+        this.activeSettings = { model, effort, permissionMode, systemPromptSha };
         return this.session;
       }
     }
 
     if (this.session) {
-      log.info("restarting runtime to apply new settings", { channelId: this.channelId, model, effort, permissionMode });
+      log.info("restarting runtime to apply new settings", {
+        channelId: this.channelId,
+        model,
+        effort,
+        permissionMode,
+        instructionsChanged,
+      });
       await this.session.stop();
     }
 
@@ -739,6 +803,7 @@ export class RoomController {
       permissionMode,
       permissionPrompts: this.deps.config.permissionPrompts,
       partial: this.streamingCapable(),
+      appendSystemPromptFile: systemPrompt ? this.writeSystemPromptFile(sessionId, systemPrompt) : null,
       interruptGraceMs: this.deps.config.interruptGraceMs,
       onEvent: (event) => {
         if (event.kind === "text-delta") this.stream?.append(event.text);
@@ -755,7 +820,7 @@ export class RoomController {
     // resumed rather than recreated.
     if (!resume) this.deps.repo.markSessionStarted(this.guildId, this.channelId);
     this.session = session;
-    this.activeSettings = { model, effort, permissionMode };
+    this.activeSettings = { model, effort, permissionMode, systemPromptSha };
     return session;
   }
 
@@ -776,7 +841,7 @@ export class RoomController {
       // they read an answer produced under them.
       if (built.notice) await this.say(built.notice);
 
-      const session = await this.ensureSession(turn.author);
+      const session = await this.ensureSession(turn.author, built.systemPrompt);
 
       // A streamed reply is opened before the runtime is asked anything, so the
       // placeholder is on screen within a moment of the turn starting.
@@ -944,7 +1009,7 @@ export class RoomController {
    */
   private async buildPrompt(
     turn: PendingTurn,
-  ): Promise<{ prompt: string; notice: string | null } | { error: string }> {
+  ): Promise<{ prompt: string; notice: string | null; systemPrompt: string | null } | { error: string }> {
     const instructions = this.renderInstructions();
     if (instructions.missing.length > 0) {
       return {
@@ -956,8 +1021,12 @@ export class RoomController {
       };
     }
 
+    // Pinned instructions ride in the system prompt when they can, sent once per
+    // process rather than in every message. Inside the message they would pile
+    // up in the conversation: the same text on every turn, forever.
+    const viaSystem = this.deliverViaSystemPrompt(instructions.text);
     const parts: string[] = [];
-    if (instructions.text) parts.push(instructions.text);
+    if (instructions.text && !viaSystem) parts.push(instructions.text);
 
     // Every turn carries what has been said since the last one, not just the
     // first. A conversation the bot cannot see is a conversation it cannot
@@ -973,7 +1042,7 @@ export class RoomController {
     this.lastHistoryId = turn.messageId;
 
     parts.push(turn.ambient ? ambientPreamble(turn.text) : turn.text);
-    return { prompt: parts.join("\n\n"), notice: instructions.notice };
+    return { prompt: parts.join("\n\n"), notice: instructions.notice, systemPrompt: viaSystem ? instructions.text : null };
   }
 
   async shutdown(): Promise<void> {

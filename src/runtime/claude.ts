@@ -14,7 +14,10 @@ export type RuntimeEvent =
 
 /** What a turn cost, as the runtime reports it. Nulls mean it did not say. */
 export interface TurnUsage {
+  /** Tokens processed fresh: uncached input plus what was written to the cache. */
   inputTokens: number | null;
+  /** Tokens read back from the cache - the bulk of a long conversation. */
+  cachedInputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
   durationMs: number | null;
@@ -48,6 +51,14 @@ export interface SessionOptions {
   permissionMode: string;
   /** Who answers permission prompts. "none" fails closed. */
   permissionPrompts: string;
+  /**
+   * A file whose contents are appended to the runtime's system prompt for the
+   * life of the process. The pinned instructions go here, sent once rather than
+   * in every message. A file rather than an argument: a multi-line prompt full
+   * of angle brackets is not something to put on a Windows command line.
+   * Cannot be changed in-band; a change means a restart.
+   */
+  appendSystemPromptFile: string | null;
   /** Ask for text as it is generated, so a reply can be shown growing. */
   partial: boolean;
   /**
@@ -113,6 +124,7 @@ export class ClaudeSession {
       o.permissionPrompts,
     ];
     if (o.partial) args.push("--include-partial-messages");
+    if (o.appendSystemPromptFile) args.push("--append-system-prompt-file", o.appendSystemPromptFile);
     // Resuming and assigning an id are mutually exclusive: one continues a
     // conversation, the other names a new one.
     if (o.resume) args.push("--resume", o.sessionId);
@@ -241,10 +253,20 @@ export class ClaudeSession {
       this.busy = false;
       const subtype = typeof event.subtype === "string" ? event.subtype : "unknown";
       const isError = event.is_error === true || subtype !== "success";
-      const u = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      const u = event.usage as {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      } | undefined;
       const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      // "Fresh" is what was actually processed this turn; a cache write is
+      // processed once and read back after, so it belongs with the fresh count.
+      const fresh = num(u?.input_tokens);
+      const written = num(u?.cache_creation_input_tokens);
       const usage: TurnUsage = {
-        inputTokens: num(u?.input_tokens),
+        inputTokens: fresh === null && written === null ? null : (fresh ?? 0) + (written ?? 0),
+        cachedInputTokens: num(u?.cache_read_input_tokens),
         outputTokens: num(u?.output_tokens),
         costUsd: num(event.total_cost_usd),
         durationMs: num(event.duration_ms) ?? num(event.duration_api_ms),

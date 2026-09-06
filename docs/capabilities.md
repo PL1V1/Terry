@@ -174,6 +174,15 @@ database-backed registry, not from files in the repository.
 Instructions are edited only through the operator CLI, never from chat. Terry
 cannot be redefined by talking to him.
 
+**How they reach the runtime.** A pinned conversation's instructions are
+delivered once, as an appended system prompt when the runtime starts (written to
+`data/prompts/<conversation>.md`, passed by file). Inside the message they would
+pile up in the conversation on every turn. A change to the pinned set is the one
+setting change that always restarts the process, since a system prompt cannot
+change in-band. With the drift policy `off`, `INSTRUCTIONS_IN_SYSTEM_PROMPT=off`,
+or a runtime without `--append-system-prompt`, they travel inside each message
+instead.
+
 ---
 
 ## 6. Pinned instructions and drift
@@ -360,6 +369,7 @@ bun run migrate:down     # roll back the most recent
 | `PEER_PERMISSION_MODE` | Runtime authority for a peer-authored turn. Default `plan`. |
 | `DEFAULT_INSTRUCTION_KEYS` | Keys a room inherits when it declares none. |
 | `INSTRUCTION_DRIFT_POLICY` | `hold` (default), `live`, or `off`. |
+| `INSTRUCTIONS_IN_SYSTEM_PROMPT` | Deliver pinned instructions once as a system prompt. Default on. |
 | `HISTORY_LIMIT` | Background context messages. Default 25. |
 | `STREAMING` | Show a reply growing in place. Default on; `off` restores post-at-end. |
 | `STREAM_EDIT_INTERVAL_MS` | Minimum gap between streaming edits. Default 1500. |
@@ -434,7 +444,7 @@ Worth knowing before you plan around him.
   decision made on the machine.
 - **Attachments are never opened.** They are described only.
 - **No character budget on instructions.** A large registry entry goes in whole.
-- **No mint record beyond the pins**, and no continuity journal — the runtime
+- **No mint record beyond the pins and the prompt files**, and no continuity journal — the runtime
   carries its own conversation history and is resumed by id.
 - **Peers cannot collaborate on controls**, only converse.
 

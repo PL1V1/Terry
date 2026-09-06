@@ -32,7 +32,7 @@
  * A model named "bad-model" is refused by set_model, the way the real runtime
  * refuses an id it does not recognise.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 function arg(name: string): string | null {
@@ -44,6 +44,12 @@ const sessionId = arg("--session-id") ?? arg("--resume") ?? "fake-session";
 let model = arg("--model");
 const effort = arg("--effort");
 let permissionMode = arg("--permission-mode") ?? "default";
+/** What the launcher appended to the system prompt, so a test can see where instructions went. */
+const appendedSystemPrompt = (() => {
+  const file = arg("--append-system-prompt-file");
+  if (file) return readFileSync(file, "utf8");
+  return arg("--append-system-prompt") ?? "";
+})();
 const resumed = Bun.argv.includes("--resume");
 
 /**
@@ -159,12 +165,18 @@ async function handleTurn(text: string): Promise<void> {
   // which instruction bodies actually reached the runtime. The ordinary reply
   // deliberately shows only the last line; pinning is about the rest.
   if (text.includes("__ECHOPROMPT__")) {
+    // Both channels are shown, labelled, so a test can assert not only that an
+    // instruction reached the runtime but which way it travelled.
+    const echoed = `[system]
+${appendedSystemPrompt}
+[message]
+${text}`;
     emit({
       type: "assistant",
       session_id: sessionId,
-      message: { role: "assistant", content: [{ type: "text", text }] },
+      message: { role: "assistant", content: [{ type: "text", text: echoed }] },
     });
-    emit({ type: "result", subtype: "success", is_error: false, result: text, session_id: sessionId });
+    emit({ type: "result", subtype: "success", is_error: false, result: echoed, session_id: sessionId });
     return;
   }
 
@@ -222,7 +234,7 @@ async function handleTurn(text: string): Promise<void> {
       session_id: sessionId,
       duration_ms: 47_000,
       total_cost_usd: 0.18,
-      usage: { input_tokens: 31_000, output_tokens: 2_000 },
+      usage: { input_tokens: 6, cache_creation_input_tokens: 0, cache_read_input_tokens: 31_000, output_tokens: 2_000 },
     });
     return;
   }

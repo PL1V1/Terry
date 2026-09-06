@@ -90,6 +90,15 @@ export interface Config {
   resumeAwakeOnRestart: boolean;
   logLevel: LogLevel;
   /**
+   * Deliver a conversation's pinned instructions once, as an appended system
+   * prompt at process start, rather than inside every message. Inside the
+   * message they accumulate in the conversation - the same text again on every
+   * turn, paid for on every turn and pushing real history out of the window.
+   * Needs a runtime that accepts --append-system-prompt and a drift policy other
+   * than off; otherwise instructions travel in the message as before.
+   */
+  instructionsInSystemPrompt: boolean;
+  /**
    * Show a reply growing in place as the runtime generates it, rather than
    * posting it whole at the end. Needs a runtime that can emit partial messages;
    * without one this is ignored with a warning, not an error.
@@ -181,6 +190,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,
     logFile: env.LOG_FILE?.trim() || null,
+    instructionsInSystemPrompt: (env.INSTRUCTIONS_IN_SYSTEM_PROMPT?.trim() ?? "on").toLowerCase() !== "off",
     streaming: (env.STREAMING?.trim() ?? "on").toLowerCase() !== "off",
     streamEditIntervalMs: intOr("STREAM_EDIT_INTERVAL_MS", env, 1500),
     interruptGraceMs: intOr("INTERRUPT_GRACE_MS", env, 3000),

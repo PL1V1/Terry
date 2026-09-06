@@ -62,14 +62,16 @@ describe("streaming - the ticker", () => {
 
 describe("streaming - the footer", () => {
   test("says elapsed, tokens and cost", () => {
-    expect(footerFor(47_000, { inputTokens: 31_000, outputTokens: 2_000, costUsd: 0.18, durationMs: null })).toBe(
-      "-# 47 s · 31k in / 2k out · $0.18",
+    expect(footerFor(47_000, { inputTokens: 6, cachedInputTokens: 45_000, outputTokens: 2_000, costUsd: 0.18, durationMs: null })).toBe(
+      "-# 47 s · 6 in + 45k cached / 2k out · $0.18",
     );
   });
 
   test("leaves out what the runtime did not report", () => {
     expect(footerFor(3_000)).toBe("-# 3 s");
-    expect(footerFor(3_000, { inputTokens: null, outputTokens: null, costUsd: null, durationMs: null })).toBe("-# 3 s");
+    expect(footerFor(3_000, { inputTokens: null, cachedInputTokens: null, outputTokens: null, costUsd: null, durationMs: null })).toBe("-# 3 s");
+    // Nothing came from cache: no "+ 0 cached" noise.
+    expect(footerFor(3_000, { inputTokens: 900, cachedInputTokens: 0, outputTokens: 10, costUsd: null, durationMs: null })).toBe("-# 3 s · 900 in / 10 out");
   });
 });
 
@@ -220,7 +222,7 @@ describe("streaming - a reply that grows in place", () => {
     await h.at("wakeup");
     await h.at("__STREAM__");
     const finals = h.transport.finalMessages();
-    expect(finals.at(-1)).toContain("31k in / 2k out · $0.18");
+    expect(finals.at(-1)).toContain("6 in + 31k cached / 2k out · $0.18");
   });
 
   test("the ticker names what the runtime is doing", async () => {

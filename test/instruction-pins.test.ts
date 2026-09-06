@@ -39,6 +39,7 @@ const HELP = `Options:
   --model <model>        Provide an alias (e.g. 'fable', 'opus', or 'sonnet')
   --permission-mode <m>  mode (choices: "acceptEdits", "plan")
   --permission-prompts <t>  target (choices: "host", "none")
+  --append-system-prompt <prompt>  Append a system prompt to the default
   -p, --print            Print response and exit
   --input-format <f>     Input format (choices: "text", "stream-json")
   --output-format <f>    Output format (choices: "text", "stream-json")

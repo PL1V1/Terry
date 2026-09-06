@@ -61,13 +61,20 @@ export function tickerFor(name: string, input: Record<string, unknown>): string 
   }
 }
 
-/** `47 s · 31k in / 2k out · $0.18`, with whatever the runtime reported. */
+/**
+ * `47 s · 6 in + 45k cached / 2k out · $0.18`, with whatever the runtime reported.
+ *
+ * The cached figure matters: on a long conversation nearly everything the model
+ * read came from cache, and a footer showing only the fresh input next to the
+ * cost looks like it is lying.
+ */
 export function footerFor(elapsedMs: number, usage?: TurnUsage): string {
   const secs = Math.max(1, Math.round(elapsedMs / 1000));
   const parts = [`${secs} s`];
   if (usage && (usage.inputTokens !== null || usage.outputTokens !== null)) {
     const k = (n: number | null): string => (n === null ? "?" : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-    parts.push(`${k(usage.inputTokens)} in / ${k(usage.outputTokens)} out`);
+    const cached = usage.cachedInputTokens ? ` + ${k(usage.cachedInputTokens)} cached` : "";
+    parts.push(`${k(usage.inputTokens)} in${cached} / ${k(usage.outputTokens)} out`);
   }
   if (usage?.costUsd !== null && usage?.costUsd !== undefined) {
     parts.push(`$${usage.costUsd.toFixed(2)}`);
