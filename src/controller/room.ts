@@ -82,6 +82,14 @@ export class RoomController {
     readonly channelId: string,
   ) {}
 
+  /**
+   * The room's persisted state, read fresh from the database on every access.
+   *
+   * Deliberately not cached: the database is the source of truth, and a room's
+   * state can change underneath a turn in flight - sleep during work, say. It
+   * reads like a field and costs a query; SQLite in-process makes that
+   * microseconds, but it is a query, and hot paths should not call it in a loop.
+   */
   private get room(): Room {
     return this.deps.repo.ensureRoom(this.guildId, this.channelId);
   }
@@ -194,8 +202,6 @@ export class RoomController {
       ambient,
     });
   }
-
-
 
   // ---------------------------------------------------------------- streaming
 
@@ -425,7 +431,6 @@ export class RoomController {
         : `Accepted. This conversation is now pinned to ${minted.length} instruction(s): ${minted.map((i) => i.key).join(", ")}. It takes effect on the next turn.`,
     );
   }
-
 
   private statusText(): string {
     const room = this.room;
@@ -663,17 +668,11 @@ export class RoomController {
   }
 
   /**
-   * Starts or restarts the runtime process when the room's model or effort no
-   * longer matches the running one. Restarting resumes the same conversation by
-   * id, so changing a setting costs context nothing.
-   */
-
-  /**
    * The runtime authority a turn runs with, decided by who spoke.
    *
    * PERMISSION_MODE is a property of the service, not of the author, so widening
    * it would grant a peer agent exactly what an operator has - and a peer is a
-   * bot on somebody else s machine, running somebody else s code. Peer turns run
+   * bot on somebody else's machine, running somebody else's code. Peer turns run
    * at PEER_PERMISSION_MODE instead, which defaults to plan.
    *
    * Switching between the two restarts the runtime and resumes the same
@@ -686,7 +685,13 @@ export class RoomController {
       : this.deps.config.permissionMode;
   }
 
-  private async ensureSession(author: AuthorKind = "operator"): Promise<ClaudeSession> {
+  /**
+   * Starts the runtime process, or brings the running one into line with the
+   * room's model, effort and the speaker's permission mode. In-band switches
+   * are tried first; a restart resumes the same conversation by id, so changing
+   * a setting costs context nothing either way.
+   */
+  private async ensureSession(author: AuthorKind): Promise<ClaudeSession> {
     const room = this.room;
     const model = room.model ?? this.deps.config.defaultModel;
     const effort = room.effort ?? this.deps.config.defaultEffort;
@@ -851,13 +856,6 @@ export class RoomController {
     return `The runtime reported a problem (${reason}). The conversation is kept.`;
   }
 
-  /**
-   * Resolves this room's instruction keys against the registry.
-   *
-   * Instructions are read on every turn rather than cached, so an edit in the
-   * registry is visible on the next message with no restart. A key marked
-   * required that resolves to nothing is a visible error, never a silent skip.
-   */
   /**
    * Resolves the instruction packet for this turn.
    *

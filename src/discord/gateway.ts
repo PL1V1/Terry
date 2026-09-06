@@ -45,7 +45,7 @@ export interface GatewayHandlers {
   onConnectionState: (state: "connecting" | "ready" | "resuming" | "disconnected") => void;
   /**
    * A close code that can never succeed on retry. The gateway stops; what
-   * happens to the process is the caller s decision, because silently staying
+   * happens to the process is the caller's decision, because silently staying
    * alive and disconnected is the one thing it must not do.
    */
   onFatal?: (code: number) => void;

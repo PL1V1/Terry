@@ -28,10 +28,10 @@ export interface TurnOutcome {
   usage?: TurnUsage;
 }
 
-/** The runtime s answer to a control request. */
+/** The runtime's answer to a control request. */
 export interface ControlResult {
   ok: boolean;
-  /** "timeout", "not-running", or the runtime s own message. */
+  /** "timeout", "not-running", or the runtime's own message. */
   error?: string;
   response?: unknown;
 }
@@ -395,7 +395,7 @@ export class ClaudeSession {
     const o = this.opts;
     if (next.effort !== o.effort) return false;
     if (next.model !== o.model) {
-      // Reverting to the runtime s default is not expressible as a switch.
+      // Reverting to the runtime's default is not expressible as a switch.
       if (!next.model) return false;
       const r = await this.control("set_model", { model: next.model });
       if (!r.ok) {

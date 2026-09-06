@@ -108,6 +108,8 @@ export class StreamedReply {
   edits = 0;
   /** Message ids in order: the first, then each overflow continuation. */
   readonly messageIds: string[] = [];
+  /** Text already frozen into earlier overflow messages, so the final text can be split to match. */
+  private frozenPrefix = "";
 
   constructor(
     private readonly transport: MessageTransport,
@@ -202,7 +204,6 @@ export class StreamedReply {
     return finalText.startsWith(frozen) ? finalText.slice(frozen.length).replace(/^\s+/, "") : finalText;
   }
 
-  private frozenPrefix = "";
 
   private push(final: boolean): Promise<void> {
     this.chain = this.chain.then(() => this.write(final)).catch((error) => {

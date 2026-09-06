@@ -48,7 +48,7 @@ export interface Config {
    * Permission mode used for a turn a PEER agent spoke.
    *
    * The runtime otherwise takes its authority from PERMISSION_MODE regardless of
-   * who is talking, so widening that would hand a bot on somebody else s machine
+   * who is talking, so widening that would hand a bot on somebody else's machine
    * exactly the authority an operator has. Peer turns run at this instead, which
    * defaults to plan: a peer can read and reason, and cannot write.
    */
