@@ -30,6 +30,12 @@ export interface Config {
   permissionPrompts: string;
   /** How many recent channel messages are supplied as background context. */
   historyLimit: number;
+  /**
+   * Whether a restart leaves awake rooms awake. Off by default: a restart
+   * returns every room to asleep, keeping the conversation mapping so that
+   * waking resumes it. Staying awake is a deliberate choice, not an accident.
+   */
+  resumeAwakeOnRestart: boolean;
   logLevel: LogLevel;
 }
 
@@ -91,6 +97,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     permissionMode: env.PERMISSION_MODE?.trim() || "plan",
     permissionPrompts: env.PERMISSION_PROMPTS?.trim() || "none",
     historyLimit: intOr("HISTORY_LIMIT", env, 25),
+    resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,
   };
 

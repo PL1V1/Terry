@@ -22,15 +22,19 @@ room. Set Developer Mode on in Discord (Settings → Advanced) to copy ids.
 
 ## 1. A human wake-up causes a real runtime reply
 
-**Status: harnessed + proven, Discord leg needs channel**
+**Status: PASSED live**
 
-Harnessed: `wakeup` starts the room, a following message runs a turn, and the
-runtime's reply is delivered back.
+Demonstrated in a test channel on 2026-09-06. `wakeup` woke the room, a
+following message ran a turn, and the runtime's reply was delivered back to
+Discord. Service log:
 
-Proven separately: the adapter starts a real streaming session against the
-installed CLI and returns its result.
+    gateway ready          botId=1546074708749979718
+    starting coding runtime  --permission-mode plan --permission-prompts none
 
-Still needs a channel: the Discord leg either side of it.
+Also harnessed, and proven separately against the real CLI: the adapter starts a
+streaming session and returns its result.
+
+To reproduce:
 
 ```
 @Terry wakeup
@@ -39,13 +43,24 @@ Still needs a channel: the Discord leg either side of it.
 
 ## 2. An authorised harmless tool operation runs and reports observed results
 
-**Status: needs channel**
+**Status: PASSED live — including the refusal**
+
+Demonstrated 2026-09-06. Asked to create a file, the runtime produced a plan and
+**did not write**. Verified afterwards: no `scratch.txt` in the workspace and
+`git status` clean. The request to widen its own permissions arrived back up the
+chat pipe and was refused there too — authority lives in `.env`, not in a
+message.
+
+Known nuance, recorded so nobody over-claims: plan mode is not a hermetic
+read-only jail. It wrote its plan to the runtime's own config directory
+(`~/.claude/plans/`), outside `WORKSPACE_DIR`. It cannot touch the codebase; it
+does keep notes of its own.
 
 ```
 @Terry list the files in the working directory and tell me how many there are
 ```
 
-Expect a count that matches reality. Then check the boundary holds:
+To reproduce. Expect a count that matches reality, then check the boundary:
 
 ```
 @Terry create a file called scratch.txt
@@ -106,7 +121,20 @@ the runtime process** on the next turn, not merely written to the database.
 
 ## 6. A restart preserves the mapping and settings; two channels stay isolated
 
-**Status: harnessed + proven**
+**Status: PASSED live** (isolation still harnessed only)
+
+Demonstrated 2026-09-06 against the running service. The room was awake with a
+mapped conversation; the service was stopped and restarted:
+
+    rooms returned to asleep after restart  count=1
+    DB state : asleep      presence: asleep      mapping: preserved
+
+This check found a real defect. The service originally left rooms awake across a
+restart while presence reported asleep, so the member list and the database
+disagreed. The brief settles it — a restart returns to asleep unless another
+policy is deliberately chosen — so startup now sleeps every awake room, keeps the
+mapping and preferences, and names the rooms it slept in the log.
+`RESUME_AWAKE_ON_RESTART=true` opts back in.
 
 Proven: a conversation was given a codeword, the runtime process was killed
 outright, and a fresh process resuming the same session id recalled it.
@@ -140,7 +168,12 @@ and ask again — the behaviour must change on the next turn.
 
 ## 8. Presence tracks state without excessive updates or competing writers
 
-**Status: partly harnessed, visual check needs channel**
+**Status: partly proven live, visual check still needs eyes**
+
+Observed live: presence writes are coalesced. Consecutive updates during startup
+landed 5.0s apart (09:12:10.627 connecting, 09:12:15.629 asleep), which is the
+trailing interval, not one write per event. One component owns presence, and it
+now agrees with the database rather than contradicting it.
 
 Harnessed: waking and sleeping move the reported state; custom activity text is
 applied and `activity auto` resets it.
@@ -187,14 +220,14 @@ Needs channel:
 
 | # | Check | Status |
 | --- | --- | --- |
-| 1 | Wake-up produces a real reply | harnessed + proven; Discord leg pending |
-| 2 | Authorised tool operation | needs channel |
+| 1 | Wake-up produces a real reply | **PASSED live** |
+| 2 | Authorised tool operation | **PASSED live**, refusal included |
 | 3 | Sleep ignores chat | harnessed |
 | 4 | Stop interrupts, queue predictable | harnessed |
 | 5 | Model and effort from real capabilities | harnessed |
-| 6 | Restart preserves; channels isolated | harnessed + proven |
+| 6 | Restart preserves; channels isolated | **PASSED live**; isolation harnessed |
 | 7 | Instructions live, required enforced | harnessed |
-| 8 | Presence tracks state | partly harnessed |
+| 8 | Presence tracks state | coalescing proven live; visual pending |
 | 9 | New session confirmed and preserved | harnessed |
 | 10 | Errors and duplicates recover | partly harnessed |
 

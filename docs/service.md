@@ -69,9 +69,11 @@ A restart is not a fresh start:
 
 - Each room's conversation mapping, model, effort and activity text are read back
   from the database.
-- A room that was **awake** stays awake and resumes its conversation by id on the
-  next message.
-- A room that was **asleep** stays asleep.
+- Every room comes back **asleep** by default, and the log names which rooms were
+  put back to sleep. Waking one resumes its conversation by id.
+- Set `RESUME_AWAKE_ON_RESTART=true` to have awake rooms stay awake instead.
+  That is a deliberate choice: without it, an unattended reboot cannot resume
+  work on its own.
 - Retired conversations stay in `session_history` and remain resumable by id.
 
 If a mapped conversation cannot be resumed, the room reports the failure in the

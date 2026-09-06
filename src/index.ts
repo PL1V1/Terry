@@ -83,6 +83,19 @@ async function main(): Promise<void> {
   const repo = new Repo(db);
   repo.pruneEvents();
 
+  // A restart must not silently resume work nobody asked for. Conversation
+  // mappings and preferences are kept, so waking a room picks it up again.
+  if (!config.resumeAwakeOnRestart) {
+    const wereAwake = repo.awakeRooms();
+    if (wereAwake.length > 0) {
+      repo.sleepAllRooms();
+      log.info("rooms returned to asleep after restart", {
+        count: wereAwake.length,
+        rooms: wereAwake.map((r) => `${r.guild_id}/${r.channel_id}`),
+      });
+    }
+  }
+
   const caps = await discoverCapabilities(config.claudeBin);
   assertPermissionSettings(caps, config.permissionMode, config.permissionPrompts);
 

@@ -170,3 +170,30 @@ describe("instruction registry", () => {
     expect(repo.resolveInstruction("k", GUILD, CHANNEL_A)!.body).toBe("two");
   });
 });
+
+describe("restart policy", () => {
+  test("awake rooms are found and returned to asleep", () => {
+    const { repo } = fresh();
+    repo.ensureRoom(GUILD, CHANNEL_A);
+    repo.ensureRoom(GUILD, CHANNEL_B);
+    repo.setState(GUILD, CHANNEL_A, "awake");
+    repo.setSession(GUILD, CHANNEL_A, "keep-me");
+    repo.setModel(GUILD, CHANNEL_A, "opus");
+
+    expect(repo.awakeRooms()).toHaveLength(1);
+    expect(repo.sleepAllRooms()).toBe(1);
+
+    const room = repo.getRoom(GUILD, CHANNEL_A)!;
+    expect(room.state).toBe("asleep");
+    // The mapping and preferences must survive; only the state changes.
+    expect(room.session_id).toBe("keep-me");
+    expect(room.model).toBe("opus");
+  });
+
+  test("sleeping when nothing is awake changes nothing", () => {
+    const { repo } = fresh();
+    repo.ensureRoom(GUILD, CHANNEL_A);
+    expect(repo.awakeRooms()).toHaveLength(0);
+    expect(repo.sleepAllRooms()).toBe(0);
+  });
+});

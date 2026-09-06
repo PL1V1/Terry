@@ -160,3 +160,15 @@ describe("authorisation", () => {
     expect(verdict.ok).toBe(false);
   });
 });
+
+describe("restart policy configuration", () => {
+  test("a restart returns rooms to asleep by default", () => {
+    expect(loadConfig(BASE_ENV).resumeAwakeOnRestart).toBe(false);
+  });
+
+  test("staying awake must be opted into explicitly", () => {
+    expect(loadConfig({ ...BASE_ENV, RESUME_AWAKE_ON_RESTART: "true" }).resumeAwakeOnRestart).toBe(true);
+    expect(loadConfig({ ...BASE_ENV, RESUME_AWAKE_ON_RESTART: "yes" }).resumeAwakeOnRestart).toBe(false);
+    expect(loadConfig({ ...BASE_ENV, RESUME_AWAKE_ON_RESTART: "1" }).resumeAwakeOnRestart).toBe(false);
+  });
+});

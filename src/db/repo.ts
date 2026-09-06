@@ -103,6 +103,30 @@ export class Repo {
     return sessionId;
   }
 
+  /** Rooms currently marked awake. */
+  awakeRooms(): Room[] {
+    return this.db
+      .query<Room, []>(
+        `SELECT guild_id, channel_id, state, session_id, model, effort, activity_mode, activity_text
+         FROM rooms WHERE state = 'awake'`,
+      )
+      .all();
+  }
+
+  /**
+   * Returns every room to asleep, leaving conversation mappings and preferences
+   * untouched. Used on startup so a restart does not silently resume work.
+   */
+  sleepAllRooms(): number {
+    const result = this.db
+      .query(
+        `UPDATE rooms SET state = 'asleep', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE state = 'awake'`,
+      )
+      .run();
+    return result.changes;
+  }
+
   retiredSessions(guildId: string, channelId: string, limit = 10): RetiredSession[] {
     return this.db
       .query<RetiredSession, [string, string, number]>(

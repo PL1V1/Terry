@@ -186,8 +186,10 @@ webhook messages are never task input.
   than retrying a request that can never succeed.
 - Rate limits (429) are respected with the server's own `retry_after`; 5xx
   responses retry with backoff.
-- A restart resumes each room's mapped conversation. A room that was asleep stays
-  asleep.
+- A restart returns every room to **asleep** and says so in the log, keeping the
+  conversation mapping and preferences. Waking a room resumes it by id, so
+  nothing is lost — but a reboot never silently resumes work nobody asked for.
+  Set `RESUME_AWAKE_ON_RESTART=true` if you would rather it came back awake.
 
 ## Tests
 
