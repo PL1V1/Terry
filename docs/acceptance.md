@@ -205,7 +205,21 @@ Harnessed:
 
 ## 7. Instruction updates are visible on the next turn, with no copied file catalogue
 
-**Status: harnessed**
+**Status: PASSED live**
+
+Demonstrated 2026-09-06 against a service running since 09:45 and never restarted:
+
+    instructions/rules.md edited v1 -> v2
+    bun run src/admin.ts instruction set house-rules --body-file ...
+    next Discord message -> "[house-rules v2] Read all 21. ..."
+
+All the rules fired, not just the marker. The counting rule produced "21" from a
+fresh read rather than repeating an earlier stale "19", and the honesty rule
+produced "I've changed nothing on disk this whole session" instead of a claimed
+summary it had not performed.
+
+The registry holds the body; `instructions/` is gitignored, so no instruction
+catalogue is committed to this repository.
 
 Harnessed: scope precedence (`global < guild < channel`); a narrower override
 does not leak into another channel; ordering is preserved; a **missing required
@@ -261,7 +275,20 @@ bun run src/admin.ts room history <guildId> <channelId>   # the old one is still
 
 ## 10. Network errors, duplicate events and delivery failures recover clearly
 
-**Status: partly harnessed, failure injection needs channel**
+**Status: PASSED live** (runtime death); network injection still optional
+
+Demonstrated 2026-09-06. The runtime was killed mid-task, scoped by parent PID:
+
+    09:58:56  taskkill /PID 13516 /F
+    09:58:56  log:     runtime exited unexpectedly  code=1
+    09:58:5x  Discord: "The runtime exited before finishing. The conversation is
+                        kept - send it again and it will resume."
+    10:00:01  log:     starting coding runtime  resume=true
+    10:00:0x  Discord: recalled the whole prior context correctly
+
+A crashed runtime costs a retry, not the conversation. Note the kill must be
+scoped by parent PID: on a developer machine many unrelated processes share the
+image name, so a name-matched kill would take out far more than the target.
 
 Harnessed: replayed message ids are rejected and new ones accepted; pruning
 removes only old keys; fatal close codes (4004, 4010–4014) are distinguished
@@ -290,10 +317,36 @@ Needs channel:
 | 4 | Stop interrupts, queue predictable | **PASSED live**; found a bug |
 | 5 | Model and effort from real capabilities | **PASSED live** (rejection) |
 | 6 | Restart preserves; channels isolated | **PASSED live** x2; isolation harnessed |
-| 7 | Instructions live, required enforced | harnessed |
+| 7 | Instructions live, required enforced | **PASSED live** |
 | 8 | Presence tracks state | coalescing proven live; visual pending |
 | 9 | New session confirmed and preserved | **PASSED live**, in full |
-| 10 | Errors and duplicates recover | partly harnessed |
+| 10 | Errors and duplicates recover | **PASSED live** (runtime death) |
+
+## Bugs this exercise found
+
+Running the checks live was not a formality. It found four real defects that the
+unit tests and the harness had both missed:
+
+1. **A restart left rooms awake in the database while presence reported asleep.**
+   Fixed by returning rooms to asleep on startup, per the brief.
+2. **Role mentions were ignored.** Discord creates a managed role named after a
+   bot; mentioning it looks identical to mentioning the bot but arrives as
+   `<@&id>`. Half of what a user naturally types was discarded.
+3. **A message that was not addressed to the bot was dropped with no log line**,
+   which is indistinguishable from a dead service. This is why finding bug 2
+   needed an investigation rather than a glance.
+4. **The first turn after any restart would have failed.** The runtime rejects
+   `--session-id` for a conversation it already knows, and the flag deciding
+   between create and resume was held in memory. Restart recovery was broken in
+   the one case it exists for.
+
+A fifth was found by the checks themselves: an interrupted task still delivered
+its partial output, contradicting the "Task interrupted" message the operator had
+just read.
+
+In three of these the harness had been too forgiving - the stub runtime slept
+before speaking, and accepted any session id. Both were tightened, and each fix
+was confirmed to fail against the old code before being accepted.
 
 ## Before a real control room
 
