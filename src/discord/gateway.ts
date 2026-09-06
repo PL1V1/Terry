@@ -43,6 +43,12 @@ export interface GatewayHandlers {
   onMessage: (message: DiscordMessage) => void;
   onReady: (data: { session_id: string; resume_gateway_url: string; user: { id: string; username?: string } }) => void;
   onConnectionState: (state: "connecting" | "ready" | "resuming" | "disconnected") => void;
+  /**
+   * A close code that can never succeed on retry. The gateway stops; what
+   * happens to the process is the caller s decision, because silently staying
+   * alive and disconnected is the one thing it must not do.
+   */
+  onFatal?: (code: number) => void;
 }
 
 /**
@@ -132,6 +138,7 @@ export class Gateway {
   private async scheduleReconnect(code: number): Promise<void> {
     if (Gateway.FATAL_CLOSE_CODES.has(code)) {
       log.error("gateway closed with a fatal code; not reconnecting", { code });
+      this.handlers.onFatal?.(code);
       return;
     }
     if (Gateway.NON_RESUMABLE.has(code)) {

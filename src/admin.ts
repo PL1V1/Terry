@@ -7,6 +7,8 @@
 import { openDatabase } from "./db/index.ts";
 import { migrateUp } from "./db/migrate.ts";
 import { Repo } from "./db/repo.ts";
+import { clearHalt, readHalt } from "./halt.ts";
+import { dirname } from "node:path";
 
 const USAGE = `Terry admin
 
@@ -18,6 +20,10 @@ Instructions
   instruction set <key> --body-file <path> [--scope global|guild|channel]
                         [--scope-id <id>] [--required]
   instruction rm  <key> --scope <scope> [--scope-id <id>]
+
+Halt
+  halt show                  why the service is declining to start, if it is
+  halt clear                 allow it to start again
 
 Rooms
   rooms
@@ -67,7 +73,34 @@ async function main(): Promise<void> {
     return;
   }
 
-  const db = openDatabase(Bun.env.DATABASE_PATH?.trim() || "./data/terry.sqlite");
+  const dbPath = Bun.env.DATABASE_PATH?.trim() || "./data/terry.sqlite";
+
+  const [group0, action0] = positional;
+  if (group0 === "halt") {
+    // Handled before the database opens: this must work when the service
+    // cannot start, and the database is one of the things that may be wrong.
+    const dir = dirname(dbPath);
+    if (action0 === "clear") {
+      console.log(
+        clearHalt(dir)
+          ? "Halt sentinel cleared. The service will start on its next launch."
+          : "No halt sentinel to clear.",
+      );
+      return;
+    }
+    const halt = readHalt(dir);
+    if (!halt) {
+      console.log("No halt sentinel. The service will start normally.");
+      return;
+    }
+    console.log(`The service is declining to start. Written :`);
+    console.log(`  reason : `);
+    if (halt.code !== null) console.log(`  code   : `);
+    console.log(`Fix the cause, then: bun run src/admin.ts halt clear`);
+    return;
+  }
+
+  const db = openDatabase(dbPath);
   migrateUp(db);
   const repo = new Repo(db);
 

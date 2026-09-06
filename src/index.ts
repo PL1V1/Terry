@@ -10,6 +10,9 @@ import { PresenceController, type ServiceState } from "./discord/presence.ts";
 import { discoverCapabilities, assertPermissionSettings } from "./runtime/capabilities.ts";
 import { RoomController } from "./controller/room.ts";
 import { closeLogFile, log, registerSecret, setLogFile } from "./log.ts";
+import { writeHalt } from "./halt.ts";
+import { ConfigError } from "./config.ts";
+import { dirname } from "node:path";
 
 /**
  * Decides whether a message may be acted on, and in what capacity.
@@ -182,6 +185,18 @@ async function main(): Promise<void> {
     onMessage: (message) => {
       void handleMessage(message);
     },
+
+    onFatal: (code) => {
+      // Retrying cannot succeed, so the process must not be restarted into the
+      // same failure. The sentinel tells the launcher to decline, and exiting
+      // zero tells the scheduler there is nothing to retry.
+      const path = writeHalt(
+        { code, reason: "Discord closed the gateway with a code that cannot succeed on retry", at: new Date().toISOString() },
+        dirname(config.databasePath),
+      );
+      log.error("halting: fatal gateway close", { code, sentinel: path });
+      void shutdown("fatal gateway close");
+    },
   });
 
   const presence = new PresenceController(gateway);
@@ -277,6 +292,16 @@ if (import.meta.main) {
   main().catch((error: unknown) => {
     // registerSecret has already run if config loaded, so this is safe to print.
     log.error("fatal", { error });
+    if (error instanceof ConfigError) {
+      // A configuration the service refuses will be refused again next minute.
+      // Retrying it is noise; the sentinel makes the next start say why instead.
+      const path = writeHalt(
+        { code: null, reason: error.message, at: new Date().toISOString() },
+        dirname(Bun.env.DATABASE_PATH?.trim() || "./data/terry.sqlite"),
+      );
+      log.error("halting: configuration refused", { sentinel: path });
+      process.exit(0);
+    }
     process.exit(1);
   });
 }

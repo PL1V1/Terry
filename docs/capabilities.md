@@ -288,7 +288,8 @@ Beyond the gates:
 - Exponential backoff with jitter, capped at 30 s.
 - Authentication and intent failures (close codes 4004, 4010–4014) stop rather
   than retry — they will never succeed on a retry, and hammering the Gateway is
-  how a token gets rate-limited.
+  how a token gets rate-limited. The service writes a halt sentinel and exits;
+  see §14.
 - Discord 429s are honoured using the returned `retry_after`.
 - Messages over Discord's 2000-character limit are split, preferring paragraph
   boundaries, and a split code block is re-fenced on both sides.
@@ -353,6 +354,9 @@ bun run migrate:down     # roll back the most recent
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. |
 | `LOG_FILE` | File the service appends structured JSON to. Set by the launcher. |
 
+The operator CLI also has `halt show` / `halt clear` for the sentinel described
+in §14.
+
 Malformed ids are rejected at startup with the offending value named, rather than
 silently ignored.
 
@@ -389,6 +393,14 @@ the installer, an elevated installer, and the launcher.
   session 0, where an ordinary session cannot read a process's command line at all.
 - Not elevated, the installer falls back to a logon trigger and says plainly what
   that costs.
+- The launcher **reaps orphaned service processes** before starting. Stopping
+  the task kills the launcher but not the `bun` child beneath it, so restarts
+  were stacking copies; every message reached the runtime once per copy.
+- A failure that can never succeed on retry — a rejected token, a missing
+  intent, a refused configuration — writes a **halt sentinel** at
+  `data/halt.json` and exits zero. The launcher declines to start while it
+  exists and says why in `logs/run-error.log`. `bun run src/admin.ts halt clear`
+  allows a start again.
 
 ---
 

@@ -98,6 +98,18 @@ try {
     Start-Sleep -Seconds 2
   }
 
+  # A halt sentinel means the last run failed in a way a retry cannot fix - a
+  # rejected token, a missing intent, a configuration the service refuses. It
+  # was written by the service on its way out. Declining here, with exit 0, is
+  # what stops the scheduler retrying the same failure every minute.
+  $haltPath = Join-Path $projectDir "data\halt.json"
+  if (Test-Path $haltPath) {
+    $why = Get-Content $haltPath -Raw
+    $msg = "=== declined to start {0} ===`r`nA halt sentinel exists at {1}:`r`n{2}`r`nRetrying cannot succeed. Fix the cause, then run:  bun run src/admin.ts halt clear`r`n`r`n" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $haltPath, $why
+    Write-Utf8 $errorLog $msg
+    exit 0
+  }
+
   $lockPath = Join-Path $logDir "terry.lock"
   try {
     $lock = [System.IO.File]::Open(

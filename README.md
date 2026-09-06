@@ -328,6 +328,24 @@ refused, which is the original behaviour.
   nothing is lost — but a reboot never silently resumes work nobody asked for.
   Set `RESUME_AWAKE_ON_RESTART=true` if you would rather it came back awake.
 
+### When it will not start on purpose
+
+Some failures can never succeed on retry: Discord rejecting the token (close
+code 4004), an intent the application was not granted (4010–4014), or a
+configuration the service refuses. Before, a fatal gateway close left the process
+alive and disconnected — the scheduler saw it as running and never restarted it.
+Exiting non-zero would have been worse: restarted into the same rejection every
+minute, 999 times.
+
+So a failure of that class writes a **halt sentinel** at `data/halt.json` and
+exits zero. The launcher checks for it before starting and declines, writing the
+reason to `logs/run-error.log`. Nothing retries until a human has looked.
+
+```sh
+bun run src/admin.ts halt show    # why it is declining, if it is
+bun run src/admin.ts halt clear   # allow it to start again
+```
+
 ## Tests
 
 ```sh
