@@ -1,6 +1,7 @@
 # Terry — functions and capabilities
 
-A complete description of what Terry does, as at commit `b8f5c9c`.
+A complete description of what Terry does. It is kept alongside the code and
+changes with it; `git log -- docs/capabilities.md` says when it last moved.
 
 Terry turns a private Discord channel into the front end for a long-running
 coding-agent conversation. You leave the terminal, wake him from your phone, talk
@@ -50,6 +51,7 @@ All commands work whether Terry is asleep or awake. Case-insensitive.
 | --- | --- |
 | `@Terry menu` / `help` | The command list |
 | `@Terry wakeup` / `wake` | Start or resume this room's conversation |
+| `@Terry wakeup: <text>` | Wake and queue `<text>` as the first turn, in one message |
 | `@Terry sleep` | Interrupt work, drop pending input, stop taking chat |
 | `@Terry stop` | Interrupt the current task, stay awake |
 | `@Terry status` | State, conversation id, model, effort, permissions, queue depth |
@@ -426,7 +428,8 @@ Worth knowing before you plan around him.
 
 ## 16. Tests
 
-161 tests across 7 files, run with `bun test`. The acceptance harness drives the
+Run with `bun test`, which reports the current count; a number written here
+would be wrong within a week. The acceptance harness drives the
 real controller against a real database with a stand-in for Discord's socket, so
 everything except the transport is the shipping code. A stub runtime enforces the
 same create-versus-resume rules as the real CLI, so a restart bug cannot pass.

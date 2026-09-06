@@ -89,6 +89,7 @@ itself, and **all of it works while asleep**.
 | --- | --- |
 | `@Terry menu` | The command list |
 | `@Terry wakeup` | Start or resume this room's conversation |
+| `@Terry wakeup: <text>` | Wake and queue `<text>` as the first turn, in one message |
 | `@Terry sleep` | Interrupt work, drop pending input, stop taking chat |
 | `@Terry stop` | Interrupt the current task, stay awake |
 | `@Terry status` | Readiness, conversation id, model, effort, queue depth |

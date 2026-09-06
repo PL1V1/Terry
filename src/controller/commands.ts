@@ -76,6 +76,12 @@ export function parseCommand(text: string): ParsedCommand | null {
   }
   if (lower === "instructions") return { name: "instructions", arg: "" };
 
+  // `wakeup: <text>` wakes the room and queues <text> as its first turn, in one
+  // message. The colon is the separator and rides on the word, so it is matched
+  // before the split rather than after.
+  const intent = /^(wakeup|wake):\s*(.*)$/is.exec(trimmed);
+  if (intent) return { name: "wakeup", arg: (intent[2] ?? "").trim() };
+
   const [word, ...rest] = trimmed.split(/\s+/);
   const head = (word ?? "").toLowerCase();
   const arg = rest.join(" ").trim();
@@ -116,6 +122,7 @@ export function menuText(botLabel: string): string {
     "**Commands** — all of these work whether I am awake or asleep.",
     "",
     `\`${botLabel} wakeup\` — start or resume this room's conversation`,
+    `\`${botLabel} wakeup: <text>\` — wake and ask something in one go`,
     `\`${botLabel} sleep\` — interrupt work, drop pending input, stop taking chat`,
     `\`${botLabel} stop\` — interrupt the current task but stay awake`,
     `\`${botLabel} status\` — readiness, model, effort, and whether work is running`,

@@ -268,7 +268,7 @@ export class RoomController {
       case "status":
         return this.say(this.statusText());
       case "wakeup":
-        return this.wakeup();
+        return this.wakeup(command.arg, message);
       case "sleep":
         return this.sleep();
       case "stop":
@@ -460,9 +460,16 @@ export class RoomController {
 
   // ------------------------------------------------------------- lifecycle
 
-  private async wakeup(): Promise<void> {
+  /**
+   * Wakes the room. With `text`, also queues it as the first turn - `wakeup:
+   * fix the build` is one message rather than two. An already-awake room just
+   * takes the turn. If the runtime then refuses to start, the turn fails
+   * visibly in the usual way; the text is never dropped in silence.
+   */
+  private async wakeup(text = "", message?: DiscordMessage): Promise<void> {
     const room = this.room;
     if (room.state === "awake" && this.session?.isRunning) {
+      if (text && message) return this.takeTurn(text, message);
       return this.say(`Already awake. ${this.running ? "Currently working." : "Idle and ready."}`);
     }
     this.deps.repo.setState(this.guildId, this.channelId, "awake");
@@ -478,6 +485,18 @@ export class RoomController {
         ? `Awake. Resuming this room's conversation \`${room.session_id}\`.`
         : "Awake. Starting a new conversation for this room.",
     );
+    if (text && message) await this.takeTurn(text, message);
+  }
+
+  /** Queues an operator message as a turn. Shared by chat and `wakeup: <text>`. */
+  private async takeTurn(text: string, message: DiscordMessage): Promise<void> {
+    await this.enqueue({
+      text,
+      authorId: message.author.id,
+      messageId: message.id,
+      author: "operator",
+      ambient: false,
+    });
   }
 
   private async sleep(): Promise<void> {
