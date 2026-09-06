@@ -13,8 +13,8 @@ const STATUS_FOR: Record<ServiceState, PresenceStatus> = {
 
 const DEFAULT_ACTIVITY: Record<ServiceState, string> = {
   asleep: "asleep — mention me with wakeup",
-  awake: "awake and idle",
-  working: "working",
+  awake: "Talk to me",
+  working: "On the job",
   connecting: "connecting",
   unavailable: "unavailable",
 };
