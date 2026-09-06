@@ -32,6 +32,7 @@ Rooms
   room use      <guildId> <channelId> <key,key,...>   set instruction keys
   room sleep    <guildId> <channelId>
   room accept   <guildId> <channelId>   re-pin its conversation to the registry as it is now
+  room new-session <guildId> <channelId>  retire its conversation and start a fresh one
   room history  <guildId> <channelId>
 
 The database is taken from DATABASE_PATH (default ./data/terry.sqlite).
@@ -209,6 +210,20 @@ async function main(): Promise<void> {
         repo.ensureRoom(guildId, channelId);
         repo.setState(guildId, channelId, "asleep");
         console.log("Room set to asleep.");
+        return;
+      }
+      if (action === "new-session") {
+        // What `new session confirm` does from chat. A conversation that has
+        // talked itself into a corner is best replaced, not argued with: its own
+        // history outweighs any instruction. Restart the service afterwards so a
+        // running room drops the old process.
+        const room = repo.getRoom(guildId, channelId);
+        if (!room) fail("no such room");
+        const retired = repo.retireSession(guildId, channelId, "new session requested from the CLI");
+        const fresh = crypto.randomUUID();
+        repo.setSession(guildId, channelId, fresh);
+        console.log(`Retired ${retired ?? "(none)"}; the room's next turn starts conversation ${fresh}.`);
+        console.log("Restart the service so a running room picks it up.");
         return;
       }
       if (action === "accept") {
