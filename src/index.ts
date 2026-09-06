@@ -7,7 +7,7 @@ import { Rest } from "./discord/rest.ts";
 import { PresenceController, type ServiceState } from "./discord/presence.ts";
 import { discoverCapabilities, assertPermissionSettings } from "./runtime/capabilities.ts";
 import { RoomController } from "./controller/room.ts";
-import { log, registerSecret } from "./log.ts";
+import { closeLogFile, log, registerSecret, setLogFile } from "./log.ts";
 
 /**
  * Decides whether a message may be acted on.
@@ -68,6 +68,7 @@ class PresenceAggregator {
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  setLogFile(config.logFile);
   log.info("starting terry", {
     workspaceDir: config.workspaceDir,
     permissionMode: config.permissionMode,
@@ -210,6 +211,7 @@ async function main(): Promise<void> {
     gateway.close();
     await Promise.all([...rooms.values()].map((room) => room.shutdown()));
     db.close();
+    closeLogFile();
     process.exit(0);
   };
 

@@ -188,3 +188,26 @@ describe("log redaction", () => {
     expect(redact("abc is fine")).toBe("abc is fine");
   });
 });
+
+describe("log file ownership", () => {
+  test("the service writes its own structured log, and closes it", async () => {
+    const { setLogFile, closeLogFile, log: logger } = await import("../src/log.ts");
+    const path = `${import.meta.dir}/../logs/test-log-${crypto.randomUUID()}.log`;
+
+    setLogFile(path);
+    logger.info("hello from the test", { marker: 42 });
+    closeLogFile();
+    await Bun.sleep(120);
+
+    const written = await Bun.file(path).text();
+    const parsed = JSON.parse(written.trim().split("\n")[0]!) as Record<string, unknown>;
+    expect(parsed.msg).toBe("hello from the test");
+    expect(parsed.marker).toBe(42);
+    expect(parsed.level).toBe("info");
+
+    // Owning the handle is the point: nothing else can be holding it afterwards.
+    const reopened = Bun.file(path);
+    expect(await reopened.exists()).toBe(true);
+    await Bun.$`rm -f ${path}`.quiet().nothrow();
+  });
+});

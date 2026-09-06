@@ -37,6 +37,8 @@ export interface Config {
    */
   resumeAwakeOnRestart: boolean;
   logLevel: LogLevel;
+  /** Optional file the service appends its own structured log to. */
+  logFile: string | null;
 }
 
 class ConfigError extends Error {}
@@ -99,6 +101,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     historyLimit: intOr("HISTORY_LIMIT", env, 25),
     resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,
+    logFile: env.LOG_FILE?.trim() || null,
   };
 
   // An empty allowlist is a configuration mistake, not an open door. Fail loudly
