@@ -55,9 +55,13 @@ export class RoomController {
   private queue: PendingTurn[] = [];
   private running = false;
   /** Model and effort the live process was started with. */
-  private activeSettings: { model: string | null; effort: string | null } | null = null;
+  private activeSettings: { model: string | null; effort: string | null; permissionMode: string } | null = null;
   private awaitingNewSessionConfirm = false;
-  private historySent = false;
+  /**
+   * The newest message already given to the runtime as context. Null means the
+   * conversation has had none yet, and the next turn carries a full block.
+   */
+  private lastHistoryId: string | null = null;
   /** Peer turns taken since an operator last spoke. Reset by any operator message. */
   private peerTurns = 0;
   /** Whether the room has already said it stopped, so it says it once. */
@@ -462,7 +466,7 @@ export class RoomController {
       return this.say(`Already awake. ${this.running ? "Currently working." : "Idle and ready."}`);
     }
     this.deps.repo.setState(this.guildId, this.channelId, "awake");
-    this.historySent = false;
+    this.lastHistoryId = null;
 
     const resuming = Boolean(room.session_id);
     if (!room.session_id) {
@@ -543,7 +547,7 @@ export class RoomController {
     const fresh = crypto.randomUUID();
     this.deps.repo.setSession(this.guildId, this.channelId, fresh);
     this.deps.repo.setState(this.guildId, this.channelId, "awake");
-    this.historySent = false;
+    this.lastHistoryId = null;
     this.setState("awake");
 
     await this.say(
@@ -584,14 +588,36 @@ export class RoomController {
    * longer matches the running one. Restarting resumes the same conversation by
    * id, so changing a setting costs context nothing.
    */
-  private async ensureSession(): Promise<ClaudeSession> {
+
+  /**
+   * The runtime authority a turn runs with, decided by who spoke.
+   *
+   * PERMISSION_MODE is a property of the service, not of the author, so widening
+   * it would grant a peer agent exactly what an operator has - and a peer is a
+   * bot on somebody else s machine, running somebody else s code. Peer turns run
+   * at PEER_PERMISSION_MODE instead, which defaults to plan.
+   *
+   * Switching between the two restarts the runtime and resumes the same
+   * conversation by id, which is the same mechanism a model or effort change
+   * already uses. It costs a process start, and it is not optional.
+   */
+  private permissionModeFor(author: AuthorKind): string {
+    return author === "peer"
+      ? this.deps.config.peerPermissionMode
+      : this.deps.config.permissionMode;
+  }
+
+  private async ensureSession(author: AuthorKind = "operator"): Promise<ClaudeSession> {
     const room = this.room;
     const model = room.model ?? this.deps.config.defaultModel;
     const effort = room.effort ?? this.deps.config.defaultEffort;
+    const permissionMode = this.permissionModeFor(author);
 
     const settingsChanged =
       this.activeSettings !== null &&
-      (this.activeSettings.model !== model || this.activeSettings.effort !== effort);
+      (this.activeSettings.model !== model ||
+        this.activeSettings.effort !== effort ||
+        this.activeSettings.permissionMode !== permissionMode);
 
     if (this.session?.isRunning && !settingsChanged) return this.session;
 
@@ -615,7 +641,7 @@ export class RoomController {
       resume,
       model,
       effort,
-      permissionMode: this.deps.config.permissionMode,
+      permissionMode,
       permissionPrompts: this.deps.config.permissionPrompts,
       onEvent: (event) => {
         if (event.kind === "stderr") log.warn("runtime stderr", { channelId: this.channelId, text: event.text });
@@ -630,7 +656,7 @@ export class RoomController {
     // resumed rather than recreated.
     if (!resume) this.deps.repo.markSessionStarted(this.guildId, this.channelId);
     this.session = session;
-    this.activeSettings = { model, effort };
+    this.activeSettings = { model, effort, permissionMode };
     return session;
   }
 
@@ -651,11 +677,9 @@ export class RoomController {
       // they read an answer produced under them.
       if (built.notice) await this.say(built.notice);
 
-      const session = await this.ensureSession();
+      const session = await this.ensureSession(turn.author);
       const outcome = await session.runTurn(built.prompt);
 
-      // The history block is only ever sent once per conversation.
-      this.historySent = true;
 
       if (outcome.reason === "interrupted") {
         // Checked first, and deliberately. A task killed mid-sentence may have
@@ -728,7 +752,18 @@ export class RoomController {
    */
   private renderInstructions(): { text: string; missing: string[]; notice: string | null } {
     const { repo, config } = this.deps;
-    const keys = repo.roomInstructionKeys(this.guildId, this.channelId);
+    let keys = repo.roomInstructionKeys(this.guildId, this.channelId);
+
+    // A room is created by the first message sent in it and declares no keys, so
+    // a new channel arrives with no rules at all and nothing says so. Falling
+    // back to the configured defaults is what stops a fresh room being a
+    // different bot from every other one.
+    if (keys.length === 0 && config.defaultInstructionKeys.length > 0) {
+      keys = [...config.defaultInstructionKeys];
+    }
+    if (keys.length === 0) {
+      log.warn("room loads no instructions", { channelId: this.channelId });
+    }
 
     const live = new Map<string, Instruction>();
     for (const key of keys) {
@@ -810,14 +845,18 @@ export class RoomController {
     const parts: string[] = [];
     if (instructions.text) parts.push(instructions.text);
 
-    if (!this.historySent) {
-      const messages = await fetchHistory(this.deps.rest, this.channelId, {
-        limit: this.deps.config.historyLimit,
-        excludeId: turn.messageId,
-      });
-      const history = renderHistory(messages);
-      if (history) parts.push(history);
-    }
+    // Every turn carries what has been said since the last one, not just the
+    // first. A conversation the bot cannot see is a conversation it cannot
+    // follow, and judging whether an un-mentioned message was meant for it is
+    // exactly a question about what came before.
+    const messages = await fetchHistory(this.deps.rest, this.channelId, {
+      limit: this.deps.config.historyLimit,
+      excludeId: turn.messageId,
+      ...(this.lastHistoryId ? { afterId: this.lastHistoryId } : {}),
+    });
+    const history = renderHistory(messages, this.lastHistoryId !== null);
+    if (history) parts.push(history);
+    this.lastHistoryId = turn.messageId;
 
     parts.push(turn.ambient ? ambientPreamble(turn.text) : turn.text);
     return { prompt: parts.join("\n\n"), notice: instructions.notice };

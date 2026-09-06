@@ -44,6 +44,24 @@ export interface Config {
    * approval is refused rather than silently allowed.
    */
   permissionPrompts: string;
+  /**
+   * Permission mode used for a turn a PEER agent spoke.
+   *
+   * The runtime otherwise takes its authority from PERMISSION_MODE regardless of
+   * who is talking, so widening that would hand a bot on somebody else s machine
+   * exactly the authority an operator has. Peer turns run at this instead, which
+   * defaults to plan: a peer can read and reason, and cannot write.
+   */
+  peerPermissionMode: string;
+  /**
+   * Instruction keys a room loads when it has declared none of its own.
+   *
+   * A room is created by the first message sent in it, with an empty key list,
+   * so a new channel silently had no rules at all - no persona, no brevity, no
+   * honesty rule - and nothing said so. Naming the keys here makes a new room
+   * inherit them instead of arriving blank.
+   */
+  defaultInstructionKeys: string[];
   /** How many recent channel messages are supplied as background context. */
   historyLimit: number;
   /**
@@ -139,6 +157,11 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     // operator decision made in the environment, never from a chat message.
     permissionMode: env.PERMISSION_MODE?.trim() || "plan",
     permissionPrompts: env.PERMISSION_PROMPTS?.trim() || "none",
+    peerPermissionMode: env.PEER_PERMISSION_MODE?.trim() || "plan",
+    defaultInstructionKeys: (env.DEFAULT_INSTRUCTION_KEYS ?? "")
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
     historyLimit: intOr("HISTORY_LIMIT", env, 25),
     attentionWindowSeconds: intOr("ATTENTION_WINDOW_SECONDS", env, 90),
     driftPolicy: driftPolicyRaw,

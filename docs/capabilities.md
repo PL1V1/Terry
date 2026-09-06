@@ -154,6 +154,9 @@ database-backed registry, not from files in the repository.
 - A key marked `--required` that resolves to nothing **stops the turn** with a
   visible error naming the key. It is never a silent skip.
 - The registry ships empty. Nothing is seeded.
+- A room declares no keys until told to, so a new channel inherits
+  `DEFAULT_INSTRUCTION_KEYS`. A room with its own keys always wins, and a room
+  loading nothing at all is logged at warn.
 
 Instructions are edited only through the operator CLI, never from chat. Terry
 cannot be redefined by talking to him.
@@ -224,15 +227,25 @@ What a peer cannot do:
   so it is refused even wearing a peer's id.
 
 Peers and operators are separate lists. Adding a peer grants it nothing an
-operator has.
+operator has — including runtime authority. `PERMISSION_MODE` belongs to the
+service rather than to whoever is talking, so a peer turn runs at
+`PEER_PERMISSION_MODE` instead, which defaults to `plan`: a peer can read and
+reason, and cannot write. Switching between the two restarts the runtime and
+resumes the same conversation by id, exactly as a model change does.
 
 ---
 
 ## 8. Channel history and attachments
 
-On the first turn of a conversation, the last `HISTORY_LIMIT` channel messages are
-supplied as **labelled background context**, explicitly not as instructions to
-replay. The block is sent once per conversation, not every turn.
+**Every** turn carries what has been said in the channel since the last one, as
+**labelled background context** and explicitly not as instructions to replay. The
+first turn of a conversation carries the last `HISTORY_LIMIT` messages; each turn
+after carries only what is new, so nothing is repeated and a turn with nothing
+new carries no block at all.
+
+This is not a nicety. A conversation the bot cannot see is one it cannot follow,
+and deciding whether an un-mentioned message was meant for it is exactly a
+question about what came before.
 
 Attachments are **described** — filename, type, size — and explicitly marked as
 not inspected. A URL is not proof an image was looked at.
@@ -330,6 +343,8 @@ bun run migrate:down     # roll back the most recent
 | `WORKSPACE_DIR` | Working directory handed to the runtime. Defaults to the current directory. |
 | `DEFAULT_MODEL` / `DEFAULT_EFFORT` | Starting values; both settable per room from Discord. |
 | `PERMISSION_MODE` / `PERMISSION_PROMPTS` | Runtime authority. Default `plan` + `none`. Not settable from chat. |
+| `PEER_PERMISSION_MODE` | Runtime authority for a peer-authored turn. Default `plan`. |
+| `DEFAULT_INSTRUCTION_KEYS` | Keys a room inherits when it declares none. |
 | `INSTRUCTION_DRIFT_POLICY` | `hold` (default), `live`, or `off`. |
 | `HISTORY_LIMIT` | Background context messages. Default 25. |
 | `ATTENTION_WINDOW_SECONDS` | How long an awake room keeps listening after being spoken to. Default 90; 0 disables. |

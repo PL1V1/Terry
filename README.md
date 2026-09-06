@@ -154,6 +154,12 @@ visible error naming the key. It does not quietly run without it.
 
 The registry ships empty. Nothing is seeded.
 
+A room is created by the first message sent in it and declares **no keys**, so a
+brand new channel would otherwise load no rules at all — no persona, no brevity
+rule, no honesty rule, and nothing saying so. `DEFAULT_INSTRUCTION_KEYS` names
+what such a room inherits; a room given its own keys always wins, and a room that
+ends up loading nothing is logged at warn.
+
 ### Pinned instructions and drift
 
 Instructions resolve live on every turn, which is right when you are editing one
@@ -269,7 +275,12 @@ What a peer cannot do:
   so it is refused even wearing a peer's id.
 
 Peers are not operators and the two lists are separate. Adding a peer does not
-grant it anything an operator has.
+grant it anything an operator has — **including runtime authority**.
+`PERMISSION_MODE` belongs to the service rather than to whoever is talking, so a
+peer turn runs at `PEER_PERMISSION_MODE` instead, which defaults to `plan`: a
+peer can read and reason, and cannot write. Switching between the two restarts
+the runtime and resumes the same conversation by id, exactly as a model change
+does.
 
 ## Security posture
 
@@ -297,9 +308,10 @@ refused, which is the original behaviour.
   report status and path, never response bodies.
 - **Replayed Gateway events are de-duplicated**, so a RESUME cannot run the same
   work twice.
-- **Channel history is supplied as labelled background context**, explicitly not
-  as instructions to replay. Attachments are described, never claimed as
-  inspected — a URL is not proof an image was looked at.
+- **Channel history is supplied as labelled background context** on every turn —
+  only what is new since the last one — explicitly not as instructions to
+  replay. Attachments are described, never claimed as inspected: a URL is not
+  proof an image was looked at.
 
 ## Resilience
 

@@ -24,6 +24,23 @@ import { closeLogFile, log, registerSecret, setLogFile } from "./log.ts";
  * stable identity to allowlist against, so anyone able to create one in the
  * channel could otherwise speak as a peer.
  */
+
+/**
+ * Rate-limits the "not an operator" warning to once per author per interval, so
+ * the fact is reported without the log becoming a transcript of the channel.
+ */
+const REPORT_INTERVAL_MS = 5 * 60 * 1000;
+const lastReported = new Map<string, number>();
+
+function shouldReport(authorId: string | undefined): boolean {
+  if (!authorId) return true;
+  const now = Date.now();
+  const previous = lastReported.get(authorId);
+  if (previous !== undefined && now - previous < REPORT_INTERVAL_MS) return false;
+  lastReported.set(authorId, now);
+  return true;
+}
+
 export function isAuthorised(
   message: DiscordMessage,
   config: Config,
@@ -173,7 +190,25 @@ async function main(): Promise<void> {
   async function handleMessage(message: DiscordMessage): Promise<void> {
     const verdict = isAuthorised(message, config);
     if (!verdict.ok) {
-      log.debug("message ignored", { reason: verdict.reason, channelId: message.channel_id });
+      // A human refused in a channel this service was deliberately pointed at is
+      // a configuration signal, not noise: somebody typed to the bot and got
+      // nothing back. At debug it was invisible, which is how an unlisted
+      // operator went unnoticed for an afternoon. Throttled per author so a busy
+      // channel cannot flood the log with the same fact.
+      const notable =
+        config.allowedChannels.has(message.channel_id) &&
+        !message.author?.bot &&
+        !message.webhook_id &&
+        verdict.reason.includes("operator");
+      if (notable && shouldReport(message.author?.id)) {
+        log.warn("message refused: author is not an operator", {
+          channelId: message.channel_id,
+          authorId: message.author?.id,
+          authorName: message.author?.username,
+        });
+      } else {
+        log.debug("message ignored", { reason: verdict.reason, channelId: message.channel_id });
+      }
       return;
     }
 
