@@ -173,6 +173,24 @@ export class StreamedReply {
     await this.fail(INTERRUPTED);
   }
 
+  /**
+   * The turn turned out not to be for us: the placeholder, and any overflow it
+   * grew into, is deleted rather than left as a reply to a message nobody
+   * established was addressed here.
+   */
+  async discard(): Promise<void> {
+    await this.settle();
+    this.closed = true;
+    if (!this.transport.deleteMessage) return;
+    for (const id of this.messageIds) {
+      try {
+        await this.transport.deleteMessage(this.channelId, id);
+      } catch (error) {
+        log.warn("could not delete a discarded placeholder", { channelId: this.channelId, messageId: id, error });
+      }
+    }
+  }
+
   // ------------------------------------------------------------ internals
 
   private render(): string {

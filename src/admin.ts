@@ -8,6 +8,7 @@ import { openDatabase } from "./db/index.ts";
 import { migrateUp } from "./db/migrate.ts";
 import { Repo } from "./db/repo.ts";
 import { clearHalt, readHalt } from "./halt.ts";
+import { hashBody, type Instruction } from "./controller/pins.ts";
 import { dirname } from "node:path";
 
 const USAGE = `Terry admin
@@ -30,6 +31,7 @@ Rooms
   room show     <guildId> <channelId>
   room use      <guildId> <channelId> <key,key,...>   set instruction keys
   room sleep    <guildId> <channelId>
+  room accept   <guildId> <channelId>   re-pin its conversation to the registry as it is now
   room history  <guildId> <channelId>
 
 The database is taken from DATABASE_PATH (default ./data/terry.sqlite).
@@ -207,6 +209,20 @@ async function main(): Promise<void> {
         repo.ensureRoom(guildId, channelId);
         repo.setState(guildId, channelId, "asleep");
         console.log("Room set to asleep.");
+        return;
+      }
+      if (action === "accept") {
+        // The same re-pin `accept instructions` does from chat, for an operator at
+        // a terminal - so a registry change can be adopted without a room round-trip.
+        const room = repo.getRoom(guildId, channelId);
+        if (!room?.session_id) fail("this room has no conversation to pin");
+        const minted: Instruction[] = [];
+        for (const key of repo.roomInstructionKeys(guildId, channelId)) {
+          const row = repo.resolveInstruction(key, guildId, channelId);
+          if (row) minted.push({ key: row.key, scope: row.scope, body: row.body, sha256: hashBody(row.body) });
+        }
+        repo.pinInstructions(guildId, channelId, room.session_id, minted);
+        console.log(`Conversation ${room.session_id} re-pinned to: ${minted.map((m) => m.key).join(", ") || "(nothing)"}. Takes effect on its next turn.`);
         return;
       }
       if (action === "history") {

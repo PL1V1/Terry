@@ -18,7 +18,7 @@ import {
 import { fetchHistory, renderHistory } from "./history.ts";
 import { log } from "../log.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export interface RoomDeps {
   config: Config;
@@ -222,7 +222,8 @@ export class RoomController {
    * disk of exactly what that conversation was told.
    */
   private writeSystemPromptFile(sessionId: string, text: string): string {
-    const dir = join(dirname(this.deps.config.databasePath), "prompts");
+    // Absolute, because the runtime starts in WORKSPACE_DIR and this file does not live there.
+    const dir = resolve(dirname(this.deps.config.databasePath), "prompts");
     mkdirSync(dir, { recursive: true });
     const path = join(dir, `${sessionId}.md`);
     writeFileSync(path, text);
@@ -275,18 +276,18 @@ export class RoomController {
   }
 
   /**
-   * Only an operator's direct message is streamed. An ambient turn may turn out
-   * not to be for this bot, and a placeholder would already be a reply to it. A
-   * peer's turn needs a real mention to reach the peer, and a mention added by
-   * edit notifies nobody, so it is posted whole with the mention on the front.
+   * An operator's turn is streamed, mentioned or overheard. An overheard turn
+   * may turn out not to be for this bot, so its placeholder is taken back with
+   * a delete when the runtime declines - which needs a transport that can
+   * delete; without one an overheard turn is posted whole. A peer's turn needs
+   * a real mention to reach the peer, and a mention added by edit notifies
+   * nobody, so it is posted whole with the mention on the front.
    */
   private shouldStream(turn: PendingTurn): boolean {
-    return (
-      turn.author === "operator" &&
-      !turn.ambient &&
-      typeof this.deps.rest.editMessage === "function" &&
-      this.streamingCapable()
-    );
+    if (turn.author !== "operator") return false;
+    if (typeof this.deps.rest.editMessage !== "function") return false;
+    if (turn.ambient && typeof this.deps.rest.deleteMessage !== "function") return false;
+    return this.streamingCapable();
   }
 
   private async openStream(turn: PendingTurn): Promise<StreamedReply | null> {
@@ -869,6 +870,7 @@ export class RoomController {
           channelId: this.channelId,
           messageId: turn.messageId,
         });
+        if (streamed) await streamed.discard();
       } else if (outcome.text?.trim()) {
         // Answering is being in the conversation, so the window re-opens here
         // rather than only on a mention. A turn can take half a minute; a window

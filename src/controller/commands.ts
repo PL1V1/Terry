@@ -34,6 +34,8 @@ export interface ParsedInput {
 // autocomplete offers that role alongside the bot user. Both render as the same
 // "@Name" on screen, so refusing the role form just makes the bot look broken.
 const MENTION = /^\s*<@[!&]?(\d+)>\s*/;
+/** The same, anywhere in the text. */
+const ANY_MENTION = /<@[!&]?(\d+)>/g;
 
 /**
  * Parses one Discord message.
@@ -51,10 +53,23 @@ export function parseInput(content: string, self: string | ReadonlySet<string>):
   let text = content ?? "";
   let mentioned = false;
 
-  const match = MENTION.exec(text);
-  if (match && selfIds.has(match[1]!)) {
+  // A mention counts wherever it sits. People write "morning @Terry, how's it
+  // going" far more often than they lead with the name, and a message that
+  // addressed the bot by name and was dropped as "not addressed" is the worst
+  // kind of silent. The first self-mention is removed from the text; any other
+  // mention is left in place as ordinary content.
+  const leading = MENTION.exec(text);
+  if (leading && selfIds.has(leading[1]!)) {
     mentioned = true;
-    text = text.slice(match[0].length);
+    text = text.slice(leading[0].length);
+  } else {
+    for (const m of text.matchAll(ANY_MENTION)) {
+      if (selfIds.has(m[1]!)) {
+        mentioned = true;
+        text = (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).replace(/[ \t]{2,}/g, " ");
+        break;
+      }
+    }
   }
 
   return { mentioned, command: mentioned ? parseCommand(text) : null, text: text.trim() };

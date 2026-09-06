@@ -21,8 +21,12 @@ describe("parseInput", () => {
     expect(result.command).toBeNull();
   });
 
-  test("ignores a mention that is not at the start", () => {
-    expect(parseInput(`hello <@${BOT}> sleep`, BOT).mentioned).toBe(false);
+  test("a mention that is not at the start still counts, and is removed from the text", () => {
+    // "Sapnin @Terry how's it going" is how people actually write. The old rule
+    // dropped it as not addressed, silently, to a real person on the first night.
+    const parsed = parseInput(`hello <@${BOT}> there`, BOT);
+    expect(parsed.mentioned).toBe(true);
+    expect(parsed.text).toBe("hello there");
   });
 
   test("does not treat ordinary chat as a command", () => {

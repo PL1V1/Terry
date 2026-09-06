@@ -64,6 +64,8 @@ export interface MessageTransport {
    * reply that grows in place. Absent on a stand-in that has no messages to edit.
    */
   editMessage?(channelId: string, messageId: string, text: string): Promise<void>;
+  /** Optional: needed to take back a placeholder for a turn that turned out not to be for us. */
+  deleteMessage?(channelId: string, messageId: string): Promise<void>;
 }
 
 export class Rest implements MessageTransport {
@@ -134,6 +136,10 @@ export class Rest implements MessageTransport {
       content: text.slice(0, MAX_MESSAGE),
       allowed_mentions: { parse: [] },
     });
+  }
+
+  async deleteMessage(channelId: string, messageId: string): Promise<void> {
+    await this.request("DELETE", `/channels/${channelId}/messages/${messageId}`);
   }
 
   async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
