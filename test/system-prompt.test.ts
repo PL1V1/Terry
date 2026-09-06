@@ -72,7 +72,7 @@ function room(env: Record<string, string> = {}, help = HELP_WITH) {
     CLAUDE_BIN: FAKE_BIN,
     DISCORD_TOKEN: "a-token-value-long-enough",
     DISCORD_APPLICATION_ID: BOT,
-  DATABASE_PATH: SCRATCH_DB,
+    DATABASE_PATH: SCRATCH_DB,
     ALLOWED_CHANNELS: CHANNEL,
     OPERATORS: OPERATOR,
     ALLOWED_GUILDS: GUILD,
