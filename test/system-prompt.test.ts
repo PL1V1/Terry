@@ -20,6 +20,11 @@ import { loadConfig } from "../src/config.ts";
 import type { MessageTransport, SentMessage } from "../src/discord/rest.ts";
 import type { DiscordMessage } from "../src/discord/gateway.ts";
 import { FAKE_BIN } from "./acceptance.test.ts";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/** Keeps system-prompt files the room writes out of the live data directory. */
+const SCRATCH_DB = join(tmpdir(), "terry-tests", "terry.sqlite");
 
 const BOT = "111111111111111111";
 const OPERATOR = "777777777777777777";
@@ -67,6 +72,7 @@ function room(env: Record<string, string> = {}, help = HELP_WITH) {
     CLAUDE_BIN: FAKE_BIN,
     DISCORD_TOKEN: "a-token-value-long-enough",
     DISCORD_APPLICATION_ID: BOT,
+  DATABASE_PATH: SCRATCH_DB,
     ALLOWED_CHANNELS: CHANNEL,
     OPERATORS: OPERATOR,
     ALLOWED_GUILDS: GUILD,
