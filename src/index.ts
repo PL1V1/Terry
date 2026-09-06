@@ -103,6 +103,7 @@ async function main(): Promise<void> {
   const rooms = new Map<string, RoomController>();
 
   let botId = config.applicationId;
+  let botName: string | null = null;
   let aggregator: PresenceAggregator | null = null;
 
   // Discord auto-creates a managed role per bot, and mentioning that role looks
@@ -133,7 +134,8 @@ async function main(): Promise<void> {
 
     onReady: (data) => {
       botId = data.user.id;
-      log.info("gateway ready", { botId });
+      botName = data.user.username ?? null;
+      log.info("gateway ready", { botId, botName });
       void discoverSelfRoles();
       // A restart returns every room to asleep unless it was left awake, which
       // the database remembers; nothing is resumed without a mapping.
@@ -173,6 +175,7 @@ async function main(): Promise<void> {
           rest,
           caps,
           botId,
+          botName,
           selfMentionIds,
           onActivity: (state, activity) => aggregator?.report(key, state, activity),
         },

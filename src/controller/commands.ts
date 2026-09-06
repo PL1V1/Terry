@@ -100,24 +100,29 @@ export function parseCommand(text: string): ParsedCommand | null {
   }
 }
 
-export function menuText(botMention: string): string {
+/**
+ * `botLabel` is a readable name such as "@Terry", not a raw <@id> mention:
+ * Discord does not render mentions inside code spans, so an id would appear to
+ * the reader as literal angle brackets and numbers.
+ */
+export function menuText(botLabel: string): string {
   return [
     "**Commands** — all of these work whether I am awake or asleep.",
     "",
-    `\`${botMention} wakeup\` — start or resume this room's conversation`,
-    `\`${botMention} sleep\` — interrupt work, drop pending input, stop taking chat`,
-    `\`${botMention} stop\` — interrupt the current task but stay awake`,
-    `\`${botMention} status\` — readiness, model, effort, and whether work is running`,
-    `\`${botMention} ping\` — connection check`,
+    `\`${botLabel} wakeup\` — start or resume this room's conversation`,
+    `\`${botLabel} sleep\` — interrupt work, drop pending input, stop taking chat`,
+    `\`${botLabel} stop\` — interrupt the current task but stay awake`,
+    `\`${botLabel} status\` — readiness, model, effort, and whether work is running`,
+    `\`${botLabel} ping\` — connection check`,
     "",
-    `\`${botMention} list models\` — models the runtime reports`,
-    `\`${botMention} model <id>\` — choose a model, e.g. \`model opus\``,
-    `\`${botMention} effort\` — effort levels this model supports`,
-    `\`${botMention} effort <level>\` — choose one, e.g. \`effort high\``,
+    `\`${botLabel} list models\` — models the runtime reports`,
+    `\`${botLabel} model <id>\` — choose a model, e.g. \`model opus\``,
+    `\`${botLabel} effort\` — effort levels this model supports`,
+    `\`${botLabel} effort <level>\` — choose one, e.g. \`effort high\``,
     "",
-    `\`${botMention} new session\` — replace this room's conversation (asks first)`,
-    `\`${botMention} activity <text>\` — set the presence text`,
-    `\`${botMention} activity auto\` — go back to automatic presence text`,
+    `\`${botLabel} new session\` — replace this room's conversation (asks first)`,
+    `\`${botLabel} activity <text>\` — set the presence text`,
+    `\`${botLabel} activity auto\` — go back to automatic presence text`,
     "",
     "Model and effort changes apply to the next turn, not to work already running.",
   ].join("\n");

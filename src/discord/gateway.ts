@@ -41,7 +41,7 @@ export type PresenceStatus = "online" | "idle" | "dnd" | "invisible";
 
 export interface GatewayHandlers {
   onMessage: (message: DiscordMessage) => void;
-  onReady: (data: { session_id: string; resume_gateway_url: string; user: { id: string } }) => void;
+  onReady: (data: { session_id: string; resume_gateway_url: string; user: { id: string; username?: string } }) => void;
   onConnectionState: (state: "connecting" | "ready" | "resuming" | "disconnected") => void;
 }
 
@@ -196,7 +196,7 @@ export class Gateway {
 
   private handleDispatch(payload: GatewayPayload): void {
     if (payload.t === "READY") {
-      const data = payload.d as { session_id: string; resume_gateway_url: string; user: { id: string } };
+      const data = payload.d as { session_id: string; resume_gateway_url: string; user: { id: string; username?: string } };
       this.sessionId = data.session_id;
       this.resumeUrl = `${data.resume_gateway_url}?v=10&encoding=json`;
       this.attempt = 0;

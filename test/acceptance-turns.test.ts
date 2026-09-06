@@ -78,6 +78,7 @@ function harness() {
         rest: transport,
         caps: CAPS,
         botId: BOT,
+        botName: "Terry",
         selfMentionIds: () => new Set([BOT]),
         onActivity: () => {},
       },

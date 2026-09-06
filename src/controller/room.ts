@@ -15,6 +15,8 @@ export interface RoomDeps {
   rest: MessageTransport;
   caps: Capabilities;
   botId: string;
+  /** Readable name for instructional text, e.g. "Terry". */
+  botName: string | null;
   /**
    * Every id that counts as addressing this bot: its user id plus its managed
    * role ids. Read through a callback because role discovery is asynchronous.
@@ -55,8 +57,13 @@ export class RoomController {
     return this.deps.repo.ensureRoom(this.guildId, this.channelId);
   }
 
+  /**
+   * How the bot is written in examples. A readable name where we know it,
+   * because these appear inside code spans where a real mention would render
+   * as raw angle brackets and digits.
+   */
   private get mention(): string {
-    return `<@${this.deps.botId}>`;
+    return this.deps.botName ? `@${this.deps.botName}` : `<@${this.deps.botId}>`;
   }
 
   private async say(text: string, replyTo?: string): Promise<void> {

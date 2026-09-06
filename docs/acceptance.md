@@ -102,7 +102,16 @@ Harnessed against a running task:
 
 ## 5. Model and effort come from real capabilities, reject invalid values, affect later turns and survive restart
 
-**Status: harnessed**
+**Status: PASSED live** (rejection path)
+
+Demonstrated 2026-09-06 in the test channel:
+
+    @Terry effort banana
+    -> "banana is not a supported effort level. The runtime accepts:
+        low, medium, high, xhigh, max."
+
+The list came from the installed runtime's own help, not from anything typed
+into this repo.
 
 Harnessed: effort lists exactly what the runtime documents; `effort banana` is
 rejected with the real list and stores nothing; a valid value is stored and
@@ -121,7 +130,11 @@ the runtime process** on the next turn, not merely written to the database.
 
 ## 6. A restart preserves the mapping and settings; two channels stay isolated
 
-**Status: PASSED live** (isolation still harnessed only)
+**Status: PASSED live, twice** (isolation still harnessed only)
+
+Confirmed again from the user's side after three service restarts: `wakeup`
+replied "Resuming this room's conversation 4aa58348-…" — the same id the room was
+given before any of them.
 
 Demonstrated 2026-09-06 against the running service. The room was awake with a
 mapped conversation; the service was stopped and restarted:
@@ -184,7 +197,10 @@ identical states dropped, so expect a handful of changes, not one per event.
 
 ## 9. Fresh-session confirmation creates a separate conversation without deleting the old one
 
-**Status: harnessed**
+**Status: PASSED live** (the ask; confirmation still to run)
+
+Demonstrated 2026-09-06. `new session` warned, named the current conversation,
+stated it would be preserved, and changed nothing while waiting.
 
 Harnessed: the ask warns, names the current conversation and **changes nothing**;
 confirming replaces it and files the old id in history; the new conversation
@@ -224,11 +240,11 @@ Needs channel:
 | 2 | Authorised tool operation | **PASSED live**, refusal included |
 | 3 | Sleep ignores chat | harnessed |
 | 4 | Stop interrupts, queue predictable | harnessed |
-| 5 | Model and effort from real capabilities | harnessed |
-| 6 | Restart preserves; channels isolated | **PASSED live**; isolation harnessed |
+| 5 | Model and effort from real capabilities | **PASSED live** (rejection) |
+| 6 | Restart preserves; channels isolated | **PASSED live** x2; isolation harnessed |
 | 7 | Instructions live, required enforced | harnessed |
 | 8 | Presence tracks state | coalescing proven live; visual pending |
-| 9 | New session confirmed and preserved | harnessed |
+| 9 | New session confirmed and preserved | **PASSED live** (ask); confirm pending |
 | 10 | Errors and duplicates recover | partly harnessed |
 
 ## Before a real control room

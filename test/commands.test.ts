@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseCommand, parseInput } from "../src/controller/commands.ts";
+import { menuText, parseCommand, parseInput } from "../src/controller/commands.ts";
 
 const BOT = "111111111111111111";
 const OTHER = "222222222222222222";
@@ -91,5 +91,23 @@ describe("role mentions", () => {
   test("a bare string self id is still accepted", () => {
     expect(parseInput(`<@${BOT}> ping`, BOT).command?.name).toBe("ping");
     expect(parseInput(`<@&${ROLE}> ping`, BOT).mentioned).toBe(false);
+  });
+});
+
+describe("menu rendering", () => {
+  test("examples use a readable label, never a raw mention", () => {
+    const menu = menuText("@Terry");
+    expect(menu).toContain("`@Terry wakeup`");
+    // A raw <@id> inside a code span renders as literal angle brackets to the
+    // reader, which is what made the first version of this menu unusable.
+    expect(menu).not.toContain("<@");
+  });
+
+  test("every documented command is one the parser accepts", () => {
+    const documented = [...menuText("@Terry").matchAll(/`@Terry ([a-z ]+?)(?: <[a-z]+>)?`/g)].map((m) => m[1]!.trim());
+    expect(documented.length).toBeGreaterThan(8);
+    for (const command of documented) {
+      expect(parseCommand(command)).not.toBeNull();
+    }
   });
 });

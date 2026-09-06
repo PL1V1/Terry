@@ -112,6 +112,7 @@ function harness(): Harness {
         rest: transport,
         caps: CAPS,
         botId: BOT,
+        botName: "Terry",
         selfMentionIds: () => new Set([BOT, BOT_ROLE]),
         onActivity: (state, text) => activity.push({ state, activity: text }),
       },
