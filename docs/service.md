@@ -21,7 +21,7 @@ What the task does:
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| Trigger | At startup | Comes back after a reboot without anyone logging in |
+| Trigger | At startup, or at logon | See "Elevation" below |
 | Restart interval | 1 minute | Retries a crash without hammering |
 | Restart count | 999 | A transient outage must not permanently stop it |
 | Execution time limit | none | It is meant to run forever |
@@ -43,25 +43,36 @@ Unregister-ScheduledTask -TaskName Terry -Confirm:$false
 
 ### Logs
 
-Terry writes structured JSON lines to stdout, and warnings and errors to stderr.
-Task Scheduler does not capture either, so redirect them if you want history.
-Point the task at a wrapper:
+Task Scheduler captures neither stdout nor stderr, so the task runs
+`service/run.ps1` rather than bun directly. That wrapper:
+
+- sets the working directory, which is how bun finds `.env`
+- appends stdout and stderr, in order, to `logs/terry-<date>.log`
+- prunes logs older than 14 days (`-KeepDays` to change)
+
+The log is UTF-8. This matters more than it sounds: PowerShell's own redirection
+operators write UTF-16 in Windows PowerShell, which turns a file full of JSON
+into something `grep`, `tail` and `Select-String` cannot read. The wrapper
+redirects through `cmd` so the service's bytes reach the file untouched.
 
 ```powershell
-# service\run.ps1
-Set-Location $PSScriptRoot\..
-$stamp = Get-Date -Format "yyyy-MM-dd"
-& bun run src\index.ts *>> "logs\terry-$stamp.log"
+Get-Content -Wait -Tail 20 .logs	erry-2026-09-06.log
+Select-String -Path .logs*.log -Pattern '"level":"(warn|error)"'
 ```
-
-Then install with `-BunPath (Get-Command powershell).Source` and adjust the
-action arguments, or simply run `run.ps1` from the task action.
 
 ### Elevation
 
-The install script does not require an administrator prompt for a task that runs
-as the current user. If you change `-RunLevel` or install for a different
-account, you will need an elevated shell.
+An at-boot trigger has to run before anyone logs in, so registering one requires
+administrator rights. The installer tries that first and falls back rather than
+failing:
+
+| Shell | Trigger | Consequence |
+| --- | --- | --- |
+| Elevated | At startup | Runs after a reboot with nobody logged in |
+| Not elevated | At logon | **Does not run after a reboot until someone logs in** |
+
+The script says which mode it used. For a genuinely unattended service, re-run it
+from an elevated shell; `-PerUser` skips the elevated attempt entirely.
 
 ## Behaviour across restarts
 

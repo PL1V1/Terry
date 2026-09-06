@@ -24,12 +24,20 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$ProjectDir = (Split-Path -Parent $PSScriptRoot),
+  [string]$ProjectDir,
   [string]$BunPath,
-  [string]$TaskName = "Terry"
+  [string]$TaskName = "Terry",
+  # Skip the elevated at-boot attempt and register a logon task directly.
+  [switch]$PerUser
 )
 
 $ErrorActionPreference = "Stop"
+
+# $PSScriptRoot is not reliably populated in a param() default under Windows
+# PowerShell, so the script's own location is resolved here instead.
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $scriptDir) { throw "Could not determine this script's directory" }
+if (-not $ProjectDir) { $ProjectDir = Split-Path -Parent $scriptDir }
 
 if (-not (Test-Path $ProjectDir)) { throw "Project directory not found: $ProjectDir" }
 if (-not (Test-Path (Join-Path $ProjectDir "src\index.ts"))) {
@@ -52,13 +60,16 @@ Write-Host "Project : $ProjectDir"
 Write-Host "Bun     : $BunPath"
 Write-Host "Task    : $TaskName"
 
-# Bun loads .env from the working directory, so the working directory is the
-# whole configuration story. Keep it pointed at the checkout.
-$action = New-ScheduledTaskAction -Execute $BunPath `
-  -Argument "run src\index.ts" `
-  -WorkingDirectory $ProjectDir
+# Run through run.ps1 rather than bun directly: Task Scheduler captures neither
+# stdout nor stderr, and a service with nowhere to report is one you cannot
+# diagnose. The wrapper sets the working directory, which is how bun finds .env,
+# and appends everything to logs\terry-<date>.log.
+$runner = Join-Path $scriptDir "run.ps1"
+if (-not (Test-Path $runner)) { throw "run.ps1 was not found next to this script" }
 
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+  -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$runner`"" `
+  -WorkingDirectory $ProjectDir
 
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
@@ -69,10 +80,7 @@ $settings = New-ScheduledTaskSettingsSet `
   -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
   -MultipleInstances IgnoreNew
 
-$principal = New-ScheduledTaskPrincipal `
-  -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) `
-  -LogonType S4U `
-  -RunLevel Limited
+$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -80,15 +88,51 @@ if ($existing) {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-Register-ScheduledTask -TaskName $TaskName `
-  -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-  -Description "Terry - persistent Discord control room for a coding-agent session" | Out-Null
+# An at-boot trigger has to run before anyone logs in, so registering one needs
+# administrator rights. Rather than failing, fall back to starting at logon,
+# which a user can register for themselves - and say plainly what that costs.
+$mode = $null
+if (-not $PerUser) {
+  try {
+    Register-ScheduledTask -TaskName $TaskName `
+      -Action $action `
+      -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+      -Settings $settings `
+      -Principal (New-ScheduledTaskPrincipal -UserId $userId -LogonType S4U -RunLevel Limited) `
+      -Description "Terry - persistent Discord control room for a coding-agent session" | Out-Null
+    $mode = "boot"
+  } catch [Microsoft.Management.Infrastructure.CimException] {
+    Write-Host ""
+    Write-Host "Not elevated, so an at-boot task cannot be registered."
+    Write-Host "Falling back to starting at logon instead."
+    Write-Host ""
+  }
+}
+
+if (-not $mode) {
+  Register-ScheduledTask -TaskName $TaskName `
+    -Action $action `
+    -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $userId) `
+    -Settings $settings `
+    -Principal (New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited) `
+    -Description "Terry - persistent Discord control room for a coding-agent session" | Out-Null
+  $mode = "logon"
+}
 
 Write-Host ""
-Write-Host "Installed. Useful commands:"
+if ($mode -eq "boot") {
+  Write-Host "Installed. Starts at boot, before login, and restarts on failure."
+} else {
+  Write-Host "Installed. Starts when $userId logs in, and restarts on failure."
+  Write-Host "It will NOT run after a reboot until someone logs in. For a truly"
+  Write-Host "unattended service, re-run this script from an elevated shell."
+}
+Write-Host ""
+Write-Host "Useful commands:"
 Write-Host "  Start-ScheduledTask   -TaskName $TaskName"
 Write-Host "  Stop-ScheduledTask    -TaskName $TaskName"
 Write-Host "  Get-ScheduledTaskInfo -TaskName $TaskName"
 Write-Host "  Unregister-ScheduledTask -TaskName $TaskName -Confirm:`$false"
 Write-Host ""
-Write-Host "It starts at boot. Start it now with Start-ScheduledTask if you want."
+Write-Host "Start it now with Start-ScheduledTask if you do not want to wait."
+Write-Host "Logs    : $(Join-Path $ProjectDir 'logs')"
