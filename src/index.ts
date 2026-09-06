@@ -1,4 +1,6 @@
-import { loadConfig, type Config } from "./config.ts";
+import { loadConfig, type AuthorKind, type Config } from "./config.ts";
+
+export type { AuthorKind };
 import { openDatabase } from "./db/index.ts";
 import { migrateUp } from "./db/migrate.ts";
 import { Repo } from "./db/repo.ts";
@@ -10,17 +12,22 @@ import { RoomController } from "./controller/room.ts";
 import { closeLogFile, log, registerSecret, setLogFile } from "./log.ts";
 
 /**
- * Decides whether a message may be acted on.
+ * Decides whether a message may be acted on, and in what capacity.
  *
- * Three independent gates, all of which must pass: the room must be allowlisted,
- * the author must be an authorised operator, and the message must come from a
- * human. Discord is a transport, not an authority.
+ * The room must be allowlisted, and the author must appear on one of two lists.
+ * An operator is a human who may command the service. A peer is another bot,
+ * named explicitly in PEER_AGENTS, which may hold a conversation but may not
+ * touch the controls - see RoomController.handleMessage.
+ *
+ * Being a bot is not itself a credential, in either direction. An unlisted bot
+ * is refused exactly as before, and a webhook is refused always: it carries no
+ * stable identity to allowlist against, so anyone able to create one in the
+ * channel could otherwise speak as a peer.
  */
 export function isAuthorised(
   message: DiscordMessage,
   config: Config,
-): { ok: true } | { ok: false; reason: string } {
-  if (message.author?.bot) return { ok: false, reason: "author is a bot" };
+): { ok: true; author: AuthorKind } | { ok: false; reason: string } {
   if (message.webhook_id) return { ok: false, reason: "message is a webhook" };
   if (!message.guild_id) return { ok: false, reason: "not a guild channel" };
   if (config.allowedGuilds.size > 0 && !config.allowedGuilds.has(message.guild_id)) {
@@ -29,10 +36,18 @@ export function isAuthorised(
   if (!config.allowedChannels.has(message.channel_id)) {
     return { ok: false, reason: "channel not allowlisted" };
   }
-  if (!config.operators.has(message.author.id)) {
+  const authorId = message.author?.id;
+  if (!authorId) return { ok: false, reason: "message has no author" };
+  if (message.author.bot) {
+    if (!config.peerAgents.has(authorId)) {
+      return { ok: false, reason: "author is a bot and not an allowlisted peer agent" };
+    }
+    return { ok: true, author: "peer" };
+  }
+  if (!config.operators.has(authorId)) {
     return { ok: false, reason: "author is not an authorised operator" };
   }
-  return { ok: true };
+  return { ok: true, author: "operator" };
 }
 
 /**
@@ -75,6 +90,10 @@ async function main(): Promise<void> {
     permissionPrompts: config.permissionPrompts,
     allowedChannels: config.allowedChannels.size,
     operators: config.operators.size,
+    // Both change what the service will do, and neither is visible anywhere else
+    // at runtime. A log that omits them cannot answer "was this on?" afterwards.
+    peerAgents: config.peerAgents.size,
+    driftPolicy: config.driftPolicy,
   });
 
   const db = openDatabase(config.databasePath);
@@ -187,7 +206,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      await room.handleMessage(message);
+      await room.handleMessage(message, verdict.author);
     } catch (error) {
       log.error("room failed to handle message", { key, error });
     }

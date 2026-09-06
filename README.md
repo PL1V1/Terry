@@ -97,6 +97,8 @@ itself, and **all of it works while asleep**.
 | `@Terry model <id>` | Choose a model |
 | `@Terry effort` | Effort levels this runtime supports |
 | `@Terry effort <level>` | Choose one |
+| `@Terry instructions` | Which instructions this conversation is pinned to |
+| `@Terry accept instructions` | Adopt the current versions from the registry |
 | `@Terry new session` | Replace this room's conversation (asks first) |
 | `@Terry new session confirm` | Confirm the replacement |
 | `@Terry activity <text>` | Custom presence text |
@@ -152,12 +154,98 @@ visible error naming the key. It does not quietly run without it.
 
 The registry ships empty. Nothing is seeded.
 
+### Pinned instructions and drift
+
+Instructions resolve live on every turn, which is right when you are editing one
+and wrong for a conversation already running under it: the edit rewrites that
+conversation's rules mid-thread, and the conversation cannot tell you, because
+from its side the rules were always these ones.
+
+So a conversation is **pinned**. On its first turn Terry mints what it was told -
+each resolved body and its sha256, frozen against that conversation's id. Every
+later turn compares the registry against the pin, and a difference is **drift**:
+reported, and adopted only when you say so.
+
+```sh
+INSTRUCTION_DRIFT_POLICY=hold   # default
+```
+
+| Policy | What a drifted instruction does |
+| --- | --- |
+| `hold` | Loads the version the conversation started with, and says which keys moved. The conversation does not shift underneath itself. |
+| `live` | Loads the new version, and says that it did. |
+| `off` | No pinning at all; resolves live every turn, as it worked before this existed. |
+
+```
+@Terry instructions          which keys this conversation is pinned to, and their hashes
+@Terry accept instructions   adopt the current versions from the registry
+```
+
+Each distinct drift state is reported **once**. Repeating it every turn teaches
+the reader to skip it, which is the same as not saying it — but editing the same
+key a second time is a new state, and is reported again.
+
+Some deliberate edges:
+
+- A key **added** to the room after minting is loaded live, not called drift.
+  There is no earlier version for it to have drifted from.
+- A key **deleted** from the registry mid-conversation keeps its pinned copy
+  under `hold`. Under `live` a required one becomes a missing-instruction error.
+- `new session` mints a fresh set. The old pins stay attached to the retired
+  conversation they describe, which is what makes them worth keeping.
+- Accepting is a room control, not a registry edit: it authors nothing, it only
+  chooses which version a running conversation is held to. Peers cannot run it.
+
+## Talking to another agent
+
+Terry can hold a conversation with another bot in the same channel — your mate's
+agent, say. Name its **bot user id** in `PEER_AGENTS`:
+
+```sh
+PEER_AGENTS=000000000000000000   # your peer bot's user id
+PEER_TURN_LIMIT=6
+```
+
+Two things have to be true for this to work at all, and both are deliberate.
+
+**Terry must be able to address the peer back.** Every ordinary message Terry
+sends suppresses mentions, so an answer cannot ping whoever the runtime happened
+to name. A reply to a peer is the one exception: it is prefixed with a real
+mention and permitted to ping. Without that, a mention-gated peer never learns it
+was answered and the conversation ends after one turn.
+
+**The exchange is budgeted.** Two agents that both answer when mentioned will
+answer each other for as long as they are allowed to, and the cost lands on two
+people who are asleep. `PEER_TURN_LIMIT` (default 6) caps how many turns in a row
+a peer may take. On the last one Terry says so, once, addressed to nobody — a
+mention there would restart the exchange it just stopped. **Any operator message
+refills the budget**, so you restart the conversation simply by joining in.
+
+What a peer cannot do:
+
+- **Use the commands.** No `sleep`, `stop`, `model`, `effort` or `new session`.
+  A peer holds a conversation; it does not hold the controls. Attempts are logged
+  and not answered — replying to a bot to say no is one more message it may
+  answer.
+- **Wake a sleeping room.** A human opens the room before two agents can use it.
+- **Speak through a webhook.** A webhook carries no identity worth allowlisting,
+  so it is refused even wearing a peer's id.
+
+Peers are not operators and the two lists are separate. Adding a peer does not
+grant it anything an operator has.
+
 ## Security posture
 
 Discord is a transport, not an authority. Three independent gates must all pass
 before a message is acted on: the channel must be allowlisted, the author must
-be an authorised operator, and the message must come from a human — bot and
-webhook messages are never task input.
+appear on an allowlist, and a webhook is never task input at all.
+
+Two allowlists admit an author, and they grant different things. An **operator**
+is a human in `OPERATORS` who may command the service. A **peer** is another bot
+named in `PEER_AGENTS` which may hold a conversation but may not touch the
+controls. Being a bot is not itself a credential in either direction: an unnamed
+bot is refused, and with `PEER_AGENTS` empty — the default — every bot is
+refused, which is the original behaviour.
 
 - **The service refuses to start** with an empty channel or operator allowlist.
 - **Discord input cannot widen the runtime's authority.** `PERMISSION_MODE` and

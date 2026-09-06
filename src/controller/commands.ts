@@ -10,7 +10,9 @@ export type CommandName =
   | "effort"
   | "new-session"
   | "confirm-new-session"
-  | "activity";
+  | "activity"
+  | "instructions"
+  | "accept-instructions";
 
 export interface ParsedCommand {
   name: CommandName;
@@ -69,6 +71,10 @@ export function parseCommand(text: string): ParsedCommand | null {
     return { name: "confirm-new-session", arg: "" };
   }
   if (lower === "list models" || lower === "models") return { name: "list-models", arg: "" };
+  if (lower === "accept instructions" || lower === "instructions accept") {
+    return { name: "accept-instructions", arg: "" };
+  }
+  if (lower === "instructions") return { name: "instructions", arg: "" };
 
   const [word, ...rest] = trimmed.split(/\s+/);
   const head = (word ?? "").toLowerCase();
@@ -119,6 +125,9 @@ export function menuText(botLabel: string): string {
     `\`${botLabel} model <id>\` — choose a model, e.g. \`model opus\``,
     `\`${botLabel} effort\` — effort levels this model supports`,
     `\`${botLabel} effort <level>\` — choose one, e.g. \`effort high\``,
+    "",
+    `\`${botLabel} instructions\` — which instructions this conversation is pinned to`,
+    `\`${botLabel} accept instructions\` — adopt the current versions from the registry`,
     "",
     `\`${botLabel} new session\` — replace this room's conversation (asks first)`,
     `\`${botLabel} activity <text>\` — set the presence text`,

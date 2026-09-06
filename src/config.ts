@@ -1,4 +1,8 @@
 import { registerSecret, setLogLevel, type LogLevel } from "./log.ts";
+import { DRIFT_POLICIES, type DriftPolicy } from "./controller/pins.ts";
+
+/** Which allowlist admitted a message, and therefore what it may do. */
+export type AuthorKind = "operator" | "peer";
 
 export interface Config {
   /** Discord bot token. Read from the environment only; never persisted. */
@@ -12,6 +16,18 @@ export interface Config {
   allowedChannels: Set<string>;
   /** User ids permitted to issue commands and queue work. Empty means none. */
   operators: Set<string>;
+  /**
+   * Bot ids allowed to address this one, so two agents can hold a conversation.
+   * Named individually and never inferred: "is a bot" is not a credential, and
+   * an empty set reproduces the original refuse-every-bot behaviour exactly.
+   */
+  peerAgents: Set<string>;
+  /**
+   * How many consecutive peer-authored turns a room takes before it stops and
+   * waits for a human. Two mention-triggered agents will otherwise answer each
+   * other until something runs out. Any operator message resets the count.
+   */
+  peerTurnLimit: number;
   claudeBin: string;
   /** Working directory handed to the coding runtime. */
   workspaceDir: string;
@@ -30,6 +46,13 @@ export interface Config {
   permissionPrompts: string;
   /** How many recent channel messages are supplied as background context. */
   historyLimit: number;
+  /**
+   * What a room does when an instruction has changed since its conversation was
+   * pinned. "hold" keeps the versions the conversation started with and reports
+   * the change; "live" adopts the change and reports that; "off" disables
+   * pinning entirely, resolving live every turn.
+   */
+  driftPolicy: DriftPolicy;
   /**
    * Whether a restart leaves awake rooms awake. Off by default: a restart
    * returns every room to asleep, keeping the conversation mapping so that
@@ -83,6 +106,11 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     throw new ConfigError(`LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}`);
   }
 
+  const driftPolicyRaw = (env.INSTRUCTION_DRIFT_POLICY?.trim() || "hold") as DriftPolicy;
+  if (!DRIFT_POLICIES.includes(driftPolicyRaw)) {
+    throw new ConfigError(`INSTRUCTION_DRIFT_POLICY must be one of ${DRIFT_POLICIES.join(", ")}`);
+  }
+
   const config: Config = {
     token,
     applicationId: required("DISCORD_APPLICATION_ID", env),
@@ -90,6 +118,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     allowedGuilds: idSet("ALLOWED_GUILDS", env),
     allowedChannels: idSet("ALLOWED_CHANNELS", env),
     operators: idSet("OPERATORS", env),
+    peerAgents: idSet("PEER_AGENTS", env),
+    peerTurnLimit: intOr("PEER_TURN_LIMIT", env, 6),
     claudeBin: env.CLAUDE_BIN?.trim() || "claude",
     workspaceDir: env.WORKSPACE_DIR?.trim() || process.cwd(),
     defaultModel: env.DEFAULT_MODEL?.trim() || null,
@@ -99,6 +129,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     permissionMode: env.PERMISSION_MODE?.trim() || "plan",
     permissionPrompts: env.PERMISSION_PROMPTS?.trim() || "none",
     historyLimit: intOr("HISTORY_LIMIT", env, 25),
+    driftPolicy: driftPolicyRaw,
     resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,
     logFile: env.LOG_FILE?.trim() || null,

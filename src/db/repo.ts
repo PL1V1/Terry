@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { Instruction } from "../controller/pins.ts";
 
 export type RoomState = "asleep" | "awake";
 export type ActivityMode = "auto" | "custom";
@@ -229,5 +230,52 @@ export class Repo {
       .query<{ n: number }, [string]>("SELECT MAX(required) AS n FROM instructions WHERE key = ?")
       .get(key);
     return (row?.n ?? 0) === 1;
+  }
+
+  // ------------------------------------------------------------------- pins
+
+  /**
+   * What a conversation was minted with, in the room's declared order.
+   *
+   * An empty result means this conversation has never been pinned, which is not
+   * the same as having nothing pinned: the caller mints on first use.
+   */
+  instructionPins(guildId: string, channelId: string, sessionId: string): Instruction[] {
+    return this.db
+      .query<{ key: string; scope: string; body: string; sha256: string }, [string, string, string]>(
+        `SELECT key, scope, body, sha256 FROM instruction_pins
+         WHERE guild_id = ? AND channel_id = ? AND session_id = ?
+         ORDER BY position, key`,
+      )
+      .all(guildId, channelId, sessionId);
+  }
+
+  /**
+   * Replaces this conversation's pins wholesale.
+   *
+   * Minting is all-or-nothing: a half-written pin set would describe a packet
+   * that was never loaded, which is worse than no record at all.
+   */
+  pinInstructions(
+    guildId: string,
+    channelId: string,
+    sessionId: string,
+    pins: readonly Instruction[],
+  ): void {
+    const run = this.db.transaction(() => {
+      this.db
+        .query("DELETE FROM instruction_pins WHERE guild_id = ? AND channel_id = ? AND session_id = ?")
+        .run(guildId, channelId, sessionId);
+      pins.forEach((pin, position) => {
+        this.db
+          .query(
+            `INSERT INTO instruction_pins
+               (guild_id, channel_id, session_id, key, position, scope, body, sha256)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(guildId, channelId, sessionId, pin.key, position, pin.scope, pin.body, pin.sha256);
+      });
+    });
+    run();
   }
 }

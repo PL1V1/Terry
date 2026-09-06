@@ -13,6 +13,7 @@
  *                turn that has already produced output
  *   __FAIL__  reports an error result
  *   __CRASH__ exits without producing a result
+ *   __ECHOPROMPT__ echoes the entire prompt, so a test can see what was sent
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -103,6 +104,20 @@ for await (const chunk of Bun.stdin.stream()) {
 
     if (text.includes("__FAIL__")) {
       emit({ type: "result", subtype: "error_during_execution", is_error: true, session_id: sessionId });
+      continue;
+    }
+
+
+    // Echoes the WHOLE prompt, not just the operator line, so a test can assert
+    // which instruction bodies actually reached the runtime. The ordinary reply
+    // deliberately shows only the last line; pinning is about the rest.
+    if (text.includes("__ECHOPROMPT__")) {
+      emit({
+        type: "assistant",
+        session_id: sessionId,
+        message: { role: "assistant", content: [{ type: "text", text }] },
+      });
+      emit({ type: "result", subtype: "success", is_error: false, result: text, session_id: sessionId });
       continue;
     }
 

@@ -1,4 +1,4 @@
-import type { Config } from "../config.ts";
+import type { AuthorKind, Config } from "../config.ts";
 import type { Repo, Room } from "../db/repo.ts";
 import type { MessageTransport } from "../discord/rest.ts";
 import type { DiscordMessage } from "../discord/gateway.ts";
@@ -6,6 +6,13 @@ import type { ServiceState } from "../discord/presence.ts";
 import type { Capabilities } from "../runtime/capabilities.ts";
 import { ClaudeSession } from "../runtime/claude.ts";
 import { parseInput, menuText, type ParsedCommand } from "./commands.ts";
+import {
+  driftNotice,
+  hashBody,
+  planPacket,
+  renderPacket,
+  type Instruction,
+} from "./pins.ts";
 import { fetchHistory, renderHistory } from "./history.ts";
 import { log } from "../log.ts";
 
@@ -30,6 +37,8 @@ interface PendingTurn {
   text: string;
   authorId: string;
   messageId: string;
+  /** Whether an operator or a peer agent spoke this turn. */
+  author: AuthorKind;
 }
 
 /**
@@ -46,6 +55,12 @@ export class RoomController {
   private activeSettings: { model: string | null; effort: string | null } | null = null;
   private awaitingNewSessionConfirm = false;
   private historySent = false;
+  /** Peer turns taken since an operator last spoke. Reset by any operator message. */
+  private peerTurns = 0;
+  /** Whether the room has already said it stopped, so it says it once. */
+  private peerLimitAnnounced = false;
+  /** The drift state already reported, so each distinct one is reported once. */
+  private announcedDrift: string | null = null;
 
   constructor(
     private readonly deps: RoomDeps,
@@ -66,9 +81,21 @@ export class RoomController {
     return this.deps.botName ? `@${this.deps.botName}` : `<@${this.deps.botId}>`;
   }
 
-  private async say(text: string, replyTo?: string): Promise<void> {
+  /**
+   * Posts to the room.
+   *
+   * Mentions are suppressed by default, so an answer cannot ping whoever the
+   * runtime happened to name. Passing addressTo is the deliberate exception: it
+   * prefixes a real mention and permits it, which is the only way a peer agent
+   * waiting to be addressed ever hears a reply. Every such call is budgeted.
+   */
+  private async say(text: string, replyTo?: string, addressTo?: string | null): Promise<void> {
+    const body = addressTo ? `<@${addressTo}> ${text}` : text;
     try {
-      await this.deps.rest.sendMessage(this.channelId, text, replyTo ? { replyTo } : {});
+      await this.deps.rest.sendMessage(this.channelId, body, {
+        ...(replyTo ? { replyTo } : {}),
+        ...(addressTo ? { allowMentions: true } : {}),
+      });
     } catch (error) {
       // A delivery failure must be visible in the logs even though the user
       // cannot be told — telling them is precisely what just failed.
@@ -84,7 +111,7 @@ export class RoomController {
 
   // ---------------------------------------------------------------- dispatch
 
-  async handleMessage(message: DiscordMessage): Promise<void> {
+  async handleMessage(message: DiscordMessage, author: AuthorKind = "operator"): Promise<void> {
     const parsed = parseInput(message.content ?? "", this.deps.selfMentionIds());
     if (!parsed.mentioned) {
       // Logged deliberately. A silently dropped message is indistinguishable
@@ -97,7 +124,27 @@ export class RoomController {
       return;
     }
 
+    // A human speaking is what the peer budget runs on. Their turn refills it
+    // and re-arms the notice, so a stalled agent conversation resumes simply by
+    // someone joining in.
+    if (author === "operator") {
+      this.peerTurns = 0;
+      this.peerLimitAnnounced = false;
+    }
+
     if (parsed.command) {
+      if (author === "peer") {
+        // Commands sleep the room, stop work in flight, change the model and
+        // start new conversations. A peer may hold a conversation; it does not
+        // hold the controls. Logged rather than refused out loud, because
+        // replying to a bot to say no is one more message it may answer.
+        log.info("peer agent attempted a command", {
+          channelId: this.channelId,
+          authorId: message.author.id,
+          command: parsed.command.name,
+        });
+        return;
+      }
       await this.handleCommand(parsed.command, message);
       return;
     }
@@ -109,7 +156,51 @@ export class RoomController {
     }
     if (!parsed.text) return;
 
-    await this.enqueue({ text: parsed.text, authorId: message.author.id, messageId: message.id });
+    if (author === "peer" && !(await this.spendPeerTurn(message))) return;
+
+    await this.enqueue({
+      text: parsed.text,
+      authorId: message.author.id,
+      messageId: message.id,
+      author,
+    });
+  }
+
+  /**
+   * Takes one turn from the peer budget, or refuses and says why.
+   *
+   * Two agents that both answer when mentioned will answer each other for as
+   * long as they are allowed to, and the cost of that lands on two people who
+   * are probably asleep. The budget bounds it: a fixed number of peer turns,
+   * refilled by any operator message. The room is not otherwise touched, so
+   * humans carry on talking to a room that has stopped talking to a bot.
+   */
+  private async spendPeerTurn(message: DiscordMessage): Promise<boolean> {
+    const limit = this.deps.config.peerTurnLimit;
+    if (this.peerTurns >= limit) {
+      log.warn("peer turn budget exhausted", {
+        channelId: this.channelId,
+        authorId: message.author.id,
+        limit,
+      });
+      if (!this.peerLimitAnnounced) {
+        this.peerLimitAnnounced = true;
+        // Said once, and addressed to nobody: a mention here would restart the
+        // exchange the budget just stopped.
+        await this.say(
+          `I have taken ${limit} turn(s) with another agent without a human speaking, so I have stopped there. Say anything and we will pick it back up.`,
+        );
+      }
+      return false;
+    }
+    this.peerTurns += 1;
+    log.info("peer agent turn", {
+      channelId: this.channelId,
+      authorId: message.author.id,
+      used: this.peerTurns,
+      limit,
+    });
+    return true;
   }
 
   private async handleCommand(command: ParsedCommand, message: DiscordMessage): Promise<void> {
@@ -141,10 +232,91 @@ export class RoomController {
         return this.confirmNewSession();
       case "activity":
         return this.setActivity(command.arg, message);
+      case "instructions":
+        return this.say(this.instructionsText());
+      case "accept-instructions":
+        return this.acceptInstructions();
     }
   }
 
   // ---------------------------------------------------------------- commands
+
+  /** What this conversation is pinned to, and whether the registry has moved. */
+  private instructionsText(): string {
+    const { repo, config } = this.deps;
+    const keys = repo.roomInstructionKeys(this.guildId, this.channelId);
+    if (keys.length === 0) return "This room loads no instructions.";
+
+    const sessionId = this.room.session_id;
+    if (config.driftPolicy === "off") {
+      return [`**Pinning is off** (policy \`off\`), so these resolve live every turn:`, ...keys.map((k) => `- ${k}`)].join("\n");
+    }
+    if (!sessionId) {
+      return ["**Not pinned yet** — this room has no conversation. Keys it will pin on the first turn:", ...keys.map((k) => `- ${k}`)].join("\n");
+    }
+
+    const pins = new Map(repo.instructionPins(this.guildId, this.channelId, sessionId).map((p) => [p.key, p]));
+    if (pins.size === 0) {
+      return ["**Not pinned yet** — pins are minted on this conversation's first turn. Keys:", ...keys.map((k) => `- ${k}`)].join("\n");
+    }
+
+    const lines = keys.map((key) => {
+      const row = repo.resolveInstruction(key, this.guildId, this.channelId);
+      const pin = pins.get(key);
+      if (!pin) return `- \`${key}\` — added since minting, loaded live`;
+      if (!row) return `- \`${key}\` — **gone from the registry**, pinned copy in use`;
+      const live = hashBody(row.body);
+      return live === pin.sha256
+        ? `- \`${key}\` — ok, \`${pin.sha256.slice(0, 12)}\``
+        : `- \`${key}\` — **drifted**, pinned \`${pin.sha256.slice(0, 12)}\` vs live \`${live.slice(0, 12)}\``;
+    });
+
+    return [
+      `**Conversation** \`${sessionId}\`  **policy** \`${config.driftPolicy}\``,
+      ...lines,
+      `Run \`${this.mention} accept instructions\` to adopt the current versions.`,
+    ].join("\n");
+  }
+
+  /**
+   * Re-mints this conversation's pins from the registry as it stands now.
+   *
+   * The operator is adopting changes they already made deliberately; this only
+   * decides which version a running conversation is held to. It authors nothing,
+   * so it is a room control rather than a registry edit.
+   */
+  private async acceptInstructions(): Promise<void> {
+    const { repo, config } = this.deps;
+    if (config.driftPolicy === "off") {
+      return this.say("Pinning is off in this deployment, so there is nothing to accept.");
+    }
+    const sessionId = this.room.session_id;
+    if (!sessionId) {
+      return this.say("There is no conversation to pin yet. Wake me and the first turn mints them.");
+    }
+
+    const keys = repo.roomInstructionKeys(this.guildId, this.channelId);
+    const minted: Instruction[] = [];
+    for (const key of keys) {
+      const row = repo.resolveInstruction(key, this.guildId, this.channelId);
+      if (row) minted.push({ key: row.key, scope: row.scope, body: row.body, sha256: hashBody(row.body) });
+    }
+
+    repo.pinInstructions(this.guildId, this.channelId, sessionId, minted);
+    this.announcedDrift = null;
+    log.info("instruction pins accepted", {
+      channelId: this.channelId,
+      sessionId,
+      keys: minted.map((i) => i.key),
+    });
+
+    await this.say(
+      minted.length === 0
+        ? "Accepted: this room now pins nothing, because no key it loads resolves to anything."
+        : `Accepted. This conversation is now pinned to ${minted.length} instruction(s): ${minted.map((i) => i.key).join(", ")}. It takes effect on the next turn.`,
+    );
+  }
+
 
   private statusText(): string {
     const room = this.room;
@@ -420,6 +592,10 @@ export class RoomController {
         return;
       }
 
+      // Said before the turn runs, so the reader learns the rules moved before
+      // they read an answer produced under them.
+      if (built.notice) await this.say(built.notice);
+
       const session = await this.ensureSession();
       const outcome = await session.runTurn(built.prompt);
 
@@ -431,7 +607,10 @@ export class RoomController {
         // already produced partial output; posting it after "Task interrupted"
         // contradicts the message the operator just read. Stop means stop.
       } else if (outcome.text?.trim()) {
-        await this.say(outcome.text.trim(), turn.messageId);
+        // Addressed back to a peer so the reply reaches it. A peer that is
+        // mention-gated - as this one is - hears nothing otherwise, and the
+        // conversation ends after a single turn.
+        await this.say(outcome.text.trim(), turn.messageId, turn.author === "peer" ? turn.authorId : null);
       } else if (outcome.ok) {
         await this.say("Finished, and the runtime returned nothing to show.");
       } else {
@@ -471,30 +650,84 @@ export class RoomController {
    * registry is visible on the next message with no restart. A key marked
    * required that resolves to nothing is a visible error, never a silent skip.
    */
-  private renderInstructions(): { text: string; missing: string[] } {
-    const keys = this.deps.repo.roomInstructionKeys(this.guildId, this.channelId);
-    const bodies: string[] = [];
-    const missing: string[] = [];
+  /**
+   * Resolves the instruction packet for this turn.
+   *
+   * Instructions are read on every turn, so an edit is visible immediately - but
+   * a conversation that is already running is pinned, so the edit is reported
+   * rather than applied underneath it. A conversation with no pins has never
+   * been minted, and minting it is the first thing that happens here.
+   */
+  private renderInstructions(): { text: string; missing: string[]; notice: string | null } {
+    const { repo, config } = this.deps;
+    const keys = repo.roomInstructionKeys(this.guildId, this.channelId);
 
+    const live = new Map<string, Instruction>();
     for (const key of keys) {
-      const row = this.deps.repo.resolveInstruction(key, this.guildId, this.channelId);
-      if (!row) {
-        if (this.deps.repo.isRequired(key)) missing.push(key);
-        else log.warn("instruction key resolved to nothing", { key, channelId: this.channelId });
-        continue;
+      const row = repo.resolveInstruction(key, this.guildId, this.channelId);
+      if (row) live.set(key, { key: row.key, scope: row.scope, body: row.body, sha256: hashBody(row.body) });
+      else if (!repo.isRequired(key)) {
+        log.warn("instruction key resolved to nothing", { key, channelId: this.channelId });
       }
-      bodies.push(`## ${row.key} (${row.scope})\n${row.body}`);
     }
 
-    const text = bodies.length ? ["<instructions>", ...bodies, "</instructions>"].join("\n\n") : "";
-    return { text, missing };
+    const sessionId = this.room.session_id;
+    const pinning = config.driftPolicy !== "off" && sessionId !== null;
+    let pins = new Map<string, Instruction>();
+
+    if (pinning) {
+      const stored = repo.instructionPins(this.guildId, this.channelId, sessionId!);
+      if (stored.length === 0 && live.size > 0) {
+        // First turn of this conversation: mint what it is being told, so that
+        // every later turn has something to have drifted from.
+        const minted = keys.map((k) => live.get(k)).filter((i): i is Instruction => i !== undefined);
+        repo.pinInstructions(this.guildId, this.channelId, sessionId!, minted);
+        log.info("minted instruction pins", {
+          channelId: this.channelId,
+          sessionId,
+          keys: minted.map((i) => i.key),
+        });
+        pins = new Map(minted.map((i) => [i.key, i]));
+      } else {
+        pins = new Map(stored.map((i) => [i.key, i]));
+      }
+    }
+
+    const plan = planPacket({
+      keys,
+      live,
+      pins,
+      isRequired: (key) => repo.isRequired(key),
+      policy: pinning ? config.driftPolicy : "off",
+    });
+
+    // Each distinct drift state is reported once. Repeating it every turn would
+    // train the reader to skip it, which is the same as not saying it.
+    let notice: string | null = null;
+    const signature = plan.signature;
+    if (signature !== this.announcedDrift) {
+      this.announcedDrift = signature;
+      notice = driftNotice(plan, config.driftPolicy, this.mention);
+      if (notice) {
+        log.info("instruction drift", {
+          channelId: this.channelId,
+          drifted: plan.drifted,
+          vanished: plan.vanished,
+          policy: config.driftPolicy,
+        });
+      }
+    }
+
+    return { text: renderPacket(plan.use), missing: plan.missing, notice };
   }
 
   /**
    * Builds the turn text: instructions on every turn, channel history once, then
    * the operator's own message.
    */
-  private async buildPrompt(turn: PendingTurn): Promise<{ prompt: string } | { error: string }> {
+  private async buildPrompt(
+    turn: PendingTurn,
+  ): Promise<{ prompt: string; notice: string | null } | { error: string }> {
     const instructions = this.renderInstructions();
     if (instructions.missing.length > 0) {
       return {
@@ -519,7 +752,7 @@ export class RoomController {
     }
 
     parts.push(turn.text);
-    return { prompt: parts.join("\n\n") };
+    return { prompt: parts.join("\n\n"), notice: instructions.notice };
   }
 
   async shutdown(): Promise<void> {
