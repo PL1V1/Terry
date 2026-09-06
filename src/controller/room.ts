@@ -6,6 +6,7 @@ import type { ServiceState } from "../discord/presence.ts";
 import type { Capabilities } from "../runtime/capabilities.ts";
 import { ClaudeSession } from "../runtime/claude.ts";
 import { parseInput, menuText, type ParsedCommand } from "./commands.ts";
+import { ambientPreamble, isDecline } from "./attention.ts";
 import {
   driftNotice,
   hashBody,
@@ -39,6 +40,8 @@ interface PendingTurn {
   messageId: string;
   /** Whether an operator or a peer agent spoke this turn. */
   author: AuthorKind;
+  /** True when nobody addressed the bot and it must decide whether to answer. */
+  ambient: boolean;
 }
 
 /**
@@ -61,6 +64,8 @@ export class RoomController {
   private peerLimitAnnounced = false;
   /** The drift state already reported, so each distinct one is reported once. */
   private announcedDrift: string | null = null;
+  /** When the attention window closes, as an epoch time. Null means closed. */
+  private attentionUntil: number | null = null;
 
   constructor(
     private readonly deps: RoomDeps,
@@ -113,15 +118,25 @@ export class RoomController {
 
   async handleMessage(message: DiscordMessage, author: AuthorKind = "operator"): Promise<void> {
     const parsed = parseInput(message.content ?? "", this.deps.selfMentionIds());
+
+    // Un-mentioned messages are considered only inside an open attention window,
+    // and only from a human. A peer always addresses this bot explicitly: two
+    // agents reading each other's ambient chatter would have nothing but the
+    // turn budget between them and a conversation nobody asked for.
+    let ambient = false;
     if (!parsed.mentioned) {
-      // Logged deliberately. A silently dropped message is indistinguishable
-      // from a dead service, and that costs an hour of somebody's afternoon.
-      log.debug("message not addressed to this bot", {
-        channelId: this.channelId,
-        messageId: message.id,
-        empty: (message.content ?? "").length === 0,
-      });
-      return;
+      if (author !== "operator" || !this.listening()) {
+        // Logged deliberately. A silently dropped message is indistinguishable
+        // from a dead service, and that costs an hour of somebody's afternoon.
+        log.debug("message not addressed to this bot", {
+          channelId: this.channelId,
+          messageId: message.id,
+          listening: this.listening(),
+          author,
+        });
+        return;
+      }
+      ambient = true;
     }
 
     // A human speaking is what the peer budget runs on. Their turn refills it
@@ -131,6 +146,10 @@ export class RoomController {
       this.peerTurns = 0;
       this.peerLimitAnnounced = false;
     }
+
+    // Being addressed directly opens the window, whether or not the message is
+    // a command: telling him to wake up is talking to him.
+    if (parsed.mentioned && author === "operator") this.openAttention();
 
     if (parsed.command) {
       if (author === "peer") {
@@ -163,7 +182,37 @@ export class RoomController {
       authorId: message.author.id,
       messageId: message.id,
       author,
+      ambient,
     });
+  }
+
+
+  /** How the status line describes the attention window. */
+  private listeningText(): string {
+    const seconds = this.deps.config.attentionWindowSeconds;
+    if (seconds <= 0) return "off — mention me every time";
+    if (!this.listening()) return `dormant — mention me, then I listen for ${seconds}s`;
+    const left = Math.ceil(((this.attentionUntil ?? 0) - Date.now()) / 1000);
+    return `yes — for another ${left}s unless we keep talking`;
+  }
+
+  /** Whether the room is currently listening to un-mentioned messages. */
+  private listening(): boolean {
+    if (this.deps.config.attentionWindowSeconds <= 0) return false;
+    if (this.room.state === "asleep") return false;
+    return this.attentionUntil !== null && Date.now() < this.attentionUntil;
+  }
+
+  /**
+   * Opens or re-opens the attention window.
+   *
+   * Called when the bot is addressed and again after every reply it gives, so
+   * the clock measures silence rather than time since the last mention. A turn
+   * can take half a minute to come back; a window running from the mention would
+   * be shut before the reply it was opened for had even arrived.
+   */
+  private openAttention(): void {
+    this.attentionUntil = Date.now() + this.deps.config.attentionWindowSeconds * 1000;
   }
 
   /**
@@ -326,6 +375,7 @@ export class RoomController {
       `**Model** ${room.model ?? this.deps.config.defaultModel ?? "runtime default"}`,
       `**Effort** ${room.effort ?? this.deps.config.defaultEffort ?? "runtime default"}`,
       `**Permissions** mode \`${this.deps.config.permissionMode}\`, prompts \`${this.deps.config.permissionPrompts}\``,
+      `**Listening** ${this.listeningText()}`,
       `**Runtime** ${this.deps.caps.version ?? "version unknown"}`,
     ];
     if (this.queue.length) lines.push(`**Queued** ${this.queue.length} message(s) waiting`);
@@ -511,7 +561,12 @@ export class RoomController {
   private async enqueue(turn: PendingTurn): Promise<void> {
     this.queue.push(turn);
     if (this.running) {
-      await this.say(`Queued — I am working. ${this.queue.length} message(s) waiting.`, turn.messageId);
+      // An ambient message queues in silence. Announcing it would be a reply
+      // to something nobody established was addressed here, which is the one
+      // thing ambient listening must not do.
+      if (!turn.ambient) {
+        await this.say(`Queued — I am working. ${this.queue.length} message(s) waiting.`, turn.messageId);
+      }
       return;
     }
     await this.drain();
@@ -606,7 +661,20 @@ export class RoomController {
         // Checked first, and deliberately. A task killed mid-sentence may have
         // already produced partial output; posting it after "Task interrupted"
         // contradicts the message the operator just read. Stop means stop.
+      } else if (outcome.text?.trim() && turn.ambient && isDecline(outcome.text)) {
+        // The runtime read the room and decided the message was not for it.
+        // Nothing is posted, and the attention window is deliberately NOT
+        // re-opened: nobody spoke to this bot, so the silence should still
+        // count towards it falling dormant.
+        log.debug("ambient message judged not for this bot", {
+          channelId: this.channelId,
+          messageId: turn.messageId,
+        });
       } else if (outcome.text?.trim()) {
+        // Answering is being in the conversation, so the window re-opens here
+        // rather than only on a mention. A turn can take half a minute; a window
+        // measured from the mention would shut before its own reply arrived.
+        this.openAttention();
         // Addressed back to a peer so the reply reaches it. A peer that is
         // mention-gated - as this one is - hears nothing otherwise, and the
         // conversation ends after a single turn.
@@ -751,7 +819,7 @@ export class RoomController {
       if (history) parts.push(history);
     }
 
-    parts.push(turn.text);
+    parts.push(turn.ambient ? ambientPreamble(turn.text) : turn.text);
     return { prompt: parts.join("\n\n"), notice: instructions.notice };
   }
 

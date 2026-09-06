@@ -47,6 +47,17 @@ export interface Config {
   /** How many recent channel messages are supplied as background context. */
   historyLimit: number;
   /**
+   * How long, in seconds, an awake room keeps listening to un-mentioned messages
+   * after being addressed. The window opens on a mention and re-opens on every
+   * reply, so a conversation stays live without being punctuated by mentions,
+   * and closes when nobody has spoken to the room for this long.
+   *
+   * Zero disables ambient listening: a mention is then required every time, as
+   * it was before this existed. Messages arriving outside an open window never
+   * reach the runtime at all, which is what keeps idle chatter free.
+   */
+  attentionWindowSeconds: number;
+  /**
    * What a room does when an instruction has changed since its conversation was
    * pinned. "hold" keeps the versions the conversation started with and reports
    * the change; "live" adopts the change and reports that; "off" disables
@@ -129,6 +140,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     permissionMode: env.PERMISSION_MODE?.trim() || "plan",
     permissionPrompts: env.PERMISSION_PROMPTS?.trim() || "none",
     historyLimit: intOr("HISTORY_LIMIT", env, 25),
+    attentionWindowSeconds: intOr("ATTENTION_WINDOW_SECONDS", env, 90),
     driftPolicy: driftPolicyRaw,
     resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,

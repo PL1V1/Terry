@@ -14,6 +14,7 @@
  *   __FAIL__  reports an error result
  *   __CRASH__ exits without producing a result
  *   __ECHOPROMPT__ echoes the entire prompt, so a test can see what was sent
+ *   __DECLINE__ replies with exactly the ambient not-for-me sentinel
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -118,6 +119,20 @@ for await (const chunk of Bun.stdin.stream()) {
         message: { role: "assistant", content: [{ type: "text", text }] },
       });
       emit({ type: "result", subtype: "success", is_error: false, result: text, session_id: sessionId });
+      continue;
+    }
+
+
+    // Emits exactly the not-for-me sentinel, so a test can exercise the runtime
+    // declining an ambient message. The ordinary echo would wrap it in "echo:"
+    // and the decline would not be recognised, which is the bug worth catching.
+    if (text.includes("__DECLINE__")) {
+      emit({
+        type: "assistant",
+        session_id: sessionId,
+        message: { role: "assistant", content: [{ type: "text", text: "__NOT_FOR_ME__" }] },
+      });
+      emit({ type: "result", subtype: "success", is_error: false, result: "__NOT_FOR_ME__", session_id: sessionId });
       continue;
     }
 

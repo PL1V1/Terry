@@ -32,7 +32,8 @@ A room is in one of three states:
 
 ### Addressing Terry
 
-Terry acts only on a message that begins with a direct mention of him. Both forms
+Terry acts on a message that begins with a direct mention of him, and on
+un-mentioned messages while an attention window is open (see below). Both forms
 count: the user mention `<@id>` and the managed role Discord auto-creates for a
 bot, `<@&id>`, because both render identically on screen and refusing one makes
 him look broken. Anything not addressed to him is logged at debug and dropped —
@@ -73,6 +74,21 @@ how many are waiting. The queue drains in order.
 the process. A turn killed mid-sentence may already have produced partial output;
 that output is **discarded**, because posting it after "Task interrupted" would
 contradict the message the operator has just read. Stop means stop.
+
+### Ambient listening
+
+Mention Terry once and an **attention window** opens. Inside it, un-mentioned
+messages are handed to the runtime, which decides from conversational context
+whether they were meant for him and answers with **silence** when they were not.
+Every reply he gives re-opens the window; it closes after
+`ATTENTION_WINDOW_SECONDS` of nobody speaking to him (default 90, 0 disables).
+
+A message outside an open window never reaches the runtime, so idle chatter is
+free. A message inside one costs a turn, because judging it is the runtime's job.
+
+Never overheard: **peers** (a peer must always address him directly), a
+**sleeping room**, and anyone who is not an operator. An overheard message that
+arrives while he is working queues in silence.
 
 ---
 
@@ -316,6 +332,7 @@ bun run migrate:down     # roll back the most recent
 | `PERMISSION_MODE` / `PERMISSION_PROMPTS` | Runtime authority. Default `plan` + `none`. Not settable from chat. |
 | `INSTRUCTION_DRIFT_POLICY` | `hold` (default), `live`, or `off`. |
 | `HISTORY_LIMIT` | Background context messages. Default 25. |
+| `ATTENTION_WINDOW_SECONDS` | How long an awake room keeps listening after being spoken to. Default 90; 0 disables. |
 | `RESUME_AWAKE_ON_RESTART` | Whether a restart leaves awake rooms awake. Default off. |
 | `DATABASE_PATH` | Default `./data/terry.sqlite`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. |
@@ -365,7 +382,8 @@ the installer, an elevated installer, and the launcher.
 Worth knowing before you plan around him.
 
 - **No direct messages.** Guild channels only.
-- **No slash commands.** Addressing is by mention.
+- **No slash commands.** Addressing is by mention, or by speaking inside an
+  open attention window.
 - **One workspace for all rooms.** `WORKSPACE_DIR` is global, so every room's
   conversation sees the same codebase.
 - **No instruction editing from chat.** The registry is CLI-only, on purpose.

@@ -196,6 +196,43 @@ Some deliberate edges:
 - Accepting is a room control, not a registry edit: it authors nothing, it only
   chooses which version a running conversation is held to. Peers cannot run it.
 
+## Ambient listening
+
+Terry answers a message that addresses him directly. He will also listen to what
+follows, so a conversation does not have to be punctuated with mentions.
+
+Mention him once and an **attention window** opens. Inside it, un-mentioned
+messages are handed to the runtime, which decides from conversational context
+whether they were meant for him — and answers with **silence** when they were
+not. Every reply he gives re-opens the window, so an exchange keeps running; it
+closes when nobody has spoken to him for `ATTENTION_WINDOW_SECONDS` (default 90).
+
+```sh
+ATTENTION_WINDOW_SECONDS=90   # 0 disables it: mention him every time
+```
+
+`@Terry status` reports whether he is currently listening and how long is left.
+
+Why 90 seconds rather than 20: a turn can take half a minute to come back, and
+then somebody has to read it and type. A window measured from the mention would
+shut before the reply it was opened for had arrived.
+
+**What it costs.** A message outside an open window never reaches the runtime, so
+idle chatter is free. A message inside one **does** cost a turn, because judging
+it is the runtime's job. The window is the budget.
+
+**What is never overheard:**
+
+- **Peers.** A peer must always address him directly. Two agents reading each
+  other's ambient chatter would have nothing but the turn budget between them
+  and a conversation nobody asked for.
+- **A sleeping room.** Ambient listening only applies while awake.
+- **Anyone who is not an operator**, exactly as before.
+
+An overheard message that arrives while he is working queues in **silence**.
+Announcing it would be a reply to something nobody established was addressed to
+him, which is the one thing ambient listening must not do.
+
 ## Talking to another agent
 
 Terry can hold a conversation with another bot in the same channel — your mate's
