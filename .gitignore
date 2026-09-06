@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.token
+secrets/
+
+# Data
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Dependencies / build
+node_modules/
+bun.lockb
+dist/
+
+# Logs
+logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
