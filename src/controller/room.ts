@@ -421,11 +421,12 @@ export class RoomController {
       // The history block is only ever sent once per conversation.
       this.historySent = true;
 
-      if (outcome.text?.trim()) {
+      if (outcome.reason === "interrupted") {
+        // Checked first, and deliberately. A task killed mid-sentence may have
+        // already produced partial output; posting it after "Task interrupted"
+        // contradicts the message the operator just read. Stop means stop.
+      } else if (outcome.text?.trim()) {
         await this.say(outcome.text.trim(), turn.messageId);
-      } else if (outcome.reason === "interrupted") {
-        // The stop and sleep commands already told the user; saying it twice
-        // would be noise.
       } else if (outcome.ok) {
         await this.say("Finished, and the runtime returned nothing to show.");
       } else {

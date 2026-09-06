@@ -337,3 +337,44 @@ describe("acceptance 9 — a new session is a genuinely separate conversation", 
     await h.shutdown();
   });
 });
+
+describe("acceptance 4 — an interrupted task stays interrupted", () => {
+  test("partial output is not delivered after stop", async () => {
+    const h = harness();
+    await h.say("wakeup");
+
+    // The runtime speaks, then hangs. This is the case that reached production:
+    // the killed task's half-finished answer arrived a second after the operator
+    // had been told the task was interrupted.
+    h.fire("__PARTIAL__ long job");
+    await until(() => h.transport.sent.some((t) => t.includes("Awake")));
+    await Bun.sleep(600);
+
+    await h.say("stop");
+    const afterStop = h.transport.sent.length;
+
+    // Give any in-flight delivery every chance to arrive.
+    await Bun.sleep(800);
+
+    expect(h.transport.last).toContain("Task interrupted");
+    expect(h.transport.sent).toHaveLength(afterStop);
+    expect(h.transport.sent.some((t) => t.includes("partial output before interrupt"))).toBe(false);
+    await h.shutdown();
+  });
+
+  test("sleep during a talking task is equally silent afterwards", async () => {
+    const h = harness();
+    await h.say("wakeup");
+
+    h.fire("__PARTIAL__ long job");
+    await Bun.sleep(600);
+
+    await h.say("sleep");
+    const afterSleep = h.transport.sent.length;
+    await Bun.sleep(800);
+
+    expect(h.transport.last).toContain("Asleep");
+    expect(h.transport.sent).toHaveLength(afterSleep);
+    await h.shutdown();
+  });
+});

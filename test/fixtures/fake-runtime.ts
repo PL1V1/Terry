@@ -8,7 +8,9 @@
  * model or effort change actually reached the process.
  *
  * Special prompts:
- *   __SLOW__  waits long enough to be interrupted
+ *   __SLOW__     waits long enough to be interrupted
+ *   __PARTIAL__  emits assistant text and then hangs, so a test can interrupt a
+ *                turn that has already produced output
  *   __FAIL__  reports an error result
  *   __CRASH__ exits without producing a result
  */
@@ -58,6 +60,15 @@ for await (const chunk of Bun.stdin.stream()) {
     }
 
     if (text.includes("__CRASH__")) process.exit(3);
+
+    if (text.includes("__PARTIAL__")) {
+      emit({
+        type: "assistant",
+        session_id: sessionId,
+        message: { role: "assistant", content: [{ type: "text", text: "partial output before interrupt" }] },
+      });
+      await Bun.sleep(30_000);
+    }
 
     if (text.includes("__SLOW__")) {
       // Long enough that a test can interrupt it, short enough not to hang CI.

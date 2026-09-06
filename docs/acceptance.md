@@ -71,7 +71,16 @@ file created**. That is the permission boundary doing its job.
 
 ## 3. Sleep ignores ordinary chat; menu and status still work
 
-**Status: harnessed**
+**Status: PASSED live**
+
+Demonstrated 2026-09-06:
+
+    09:37:15  sleep          -> "Asleep. I will ignore ordinary chat..."
+    09:37:26  "you there?"   -> no reply at all
+    09:37:35  menu           -> full command list
+
+Service log for the middle message: `ignoring chat while asleep`. The silence was
+a decision, not a failure.
 
 Harnessed: a fresh room starts asleep; ordinary chat while asleep produces
 **no messages at all**; `menu`, `status` and `ping` still answer; chat is ignored
@@ -88,7 +97,24 @@ In the channel, also confirm presence goes idle.
 
 ## 4. Stop interrupts a real task and pending input is handled predictably
 
-**Status: harnessed**
+**Status: PASSED live — and it found a bug**
+
+Demonstrated 2026-09-06:
+
+    09:38:26  a long task started
+    09:38:31  second message -> "Queued — I am working. 1 message(s) waiting."
+    09:38:47  stop           -> "Task interrupted. Still awake... Cleared 1 queued"
+
+**The bug.** One second after reporting the interruption, the killed task's
+partial answer was delivered anyway. The outcome branches tested `text` before
+`interrupted`, so a task that had already started speaking still got its
+half-finished output posted — directly contradicting the message the operator had
+just read.
+
+The harness had missed it because the stub runtime slept before producing any
+output, so there was never a partial answer to leak. The stub now has a
+`__PARTIAL__` mode that speaks and then hangs. Both new tests were confirmed to
+fail against the old branch order and pass against the new one.
 
 Harnessed against a running task:
 
@@ -197,10 +223,17 @@ identical states dropped, so expect a handful of changes, not one per event.
 
 ## 9. Fresh-session confirmation creates a separate conversation without deleting the old one
 
-**Status: PASSED live** (the ask; confirmation still to run)
+**Status: PASSED live, in full**
 
-Demonstrated 2026-09-06. `new session` warned, named the current conversation,
-stated it would be preserved, and changed nothing while waiting.
+Demonstrated 2026-09-06:
+
+    new session confirm  (unprompted) -> "Nothing to confirm. Run new session first."
+    new session                       -> warned, named 4aa58348-…, changed nothing
+    new session confirm               -> "New conversation d1f6ae91-…"
+    status                            -> reports the new conversation
+
+The old conversation is in `session_history`, retired at 09:36:42 with reason
+"new session requested", and remains resumable by id.
 
 Harnessed: the ask warns, names the current conversation and **changes nothing**;
 confirming replaces it and files the old id in history; the new conversation
@@ -238,13 +271,13 @@ Needs channel:
 | --- | --- | --- |
 | 1 | Wake-up produces a real reply | **PASSED live** |
 | 2 | Authorised tool operation | **PASSED live**, refusal included |
-| 3 | Sleep ignores chat | harnessed |
-| 4 | Stop interrupts, queue predictable | harnessed |
+| 3 | Sleep ignores chat | **PASSED live** |
+| 4 | Stop interrupts, queue predictable | **PASSED live**; found a bug |
 | 5 | Model and effort from real capabilities | **PASSED live** (rejection) |
 | 6 | Restart preserves; channels isolated | **PASSED live** x2; isolation harnessed |
 | 7 | Instructions live, required enforced | harnessed |
 | 8 | Presence tracks state | coalescing proven live; visual pending |
-| 9 | New session confirmed and preserved | **PASSED live** (ask); confirm pending |
+| 9 | New session confirmed and preserved | **PASSED live**, in full |
 | 10 | Errors and duplicates recover | partly harnessed |
 
 ## Before a real control room
