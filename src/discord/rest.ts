@@ -59,6 +59,11 @@ export interface MessageTransport {
     options?: { replyTo?: string; allowMentions?: boolean },
   ): Promise<SentMessage[]>;
   recentMessages(channelId: string, limit: number): Promise<unknown[]>;
+  /**
+   * Optional: a transport without it gets post-at-end replies instead of a
+   * reply that grows in place. Absent on a stand-in that has no messages to edit.
+   */
+  editMessage?(channelId: string, messageId: string, text: string): Promise<void>;
 }
 
 export class Rest implements MessageTransport {

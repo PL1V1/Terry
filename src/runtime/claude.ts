@@ -4,17 +4,28 @@ import { log } from "../log.ts";
 export type RuntimeEvent =
   | { kind: "ready"; sessionId: string | null }
   | { kind: "assistant-text"; text: string }
-  | { kind: "tool-use"; name: string }
-  | { kind: "result"; ok: boolean; text: string | null; sessionId: string | null; errorSubtype?: string }
+  /** A fragment of assistant text, as it is generated. Only with partial messages on. */
+  | { kind: "text-delta"; text: string }
+  | { kind: "tool-use"; name: string; input: Record<string, unknown> }
+  | { kind: "result"; ok: boolean; text: string | null; sessionId: string | null; errorSubtype?: string; usage?: TurnUsage }
   | { kind: "stderr"; text: string }
   | { kind: "exit"; code: number | null; expected: boolean }
   | { kind: "parse-error"; line: string };
+
+/** What a turn cost, as the runtime reports it. Nulls mean it did not say. */
+export interface TurnUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  durationMs: number | null;
+}
 
 export interface TurnOutcome {
   ok: boolean;
   text: string | null;
   /** complete | interrupted | exited | not-running | a runtime error subtype */
   reason: string;
+  usage?: TurnUsage;
 }
 
 export interface SessionOptions {
@@ -29,6 +40,8 @@ export interface SessionOptions {
   permissionMode: string;
   /** Who answers permission prompts. "none" fails closed. */
   permissionPrompts: string;
+  /** Ask for text as it is generated, so a reply can be shown growing. */
+  partial: boolean;
   onEvent: (event: RuntimeEvent) => void;
 }
 
@@ -44,6 +57,10 @@ export class ClaudeSession {
   private stdin: FileSink | null = null;
   private stopping = false;
   private busy = false;
+  /** Type of the content block currently streaming, so only text deltas are relayed. */
+  private blockType: string | null = null;
+  /** Text blocks seen this turn, so a second one is separated from the first. */
+  private textBlocks = 0;
 
   private handler: (event: RuntimeEvent) => void;
 
@@ -77,6 +94,7 @@ export class ClaudeSession {
       "--permission-prompts",
       o.permissionPrompts,
     ];
+    if (o.partial) args.push("--include-partial-messages");
     // Resuming and assigning an id are mutually exclusive: one continues a
     // conversation, the other names a new one.
     if (o.resume) args.push("--resume", o.sessionId);
@@ -155,6 +173,29 @@ export class ClaudeSession {
       return;
     }
 
+    if (type === "stream_event") {
+      // The runtime wraps the API stream; only text deltas are of interest here.
+      // Thinking and tool-input deltas are ignored, and the complete assistant
+      // message still follows, so nothing is lost by dropping them.
+      const inner = event.event as Record<string, unknown> | undefined;
+      if (inner?.type === "content_block_start") {
+        const block = inner.content_block as { type?: string } | undefined;
+        this.blockType = typeof block?.type === "string" ? block.type : null;
+        if (this.blockType === "text") {
+          if (this.textBlocks > 0) this.emit({ kind: "text-delta", text: "\n\n" });
+          this.textBlocks += 1;
+        }
+      } else if (inner?.type === "content_block_delta" && this.blockType === "text") {
+        const delta = inner.delta as { type?: string; text?: string } | undefined;
+        if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text) {
+          this.emit({ kind: "text-delta", text: delta.text });
+        }
+      } else if (inner?.type === "content_block_stop") {
+        this.blockType = null;
+      }
+      return;
+    }
+
     if (type === "assistant") {
       const message = event.message as { content?: unknown } | undefined;
       const content = Array.isArray(message?.content) ? message.content : [];
@@ -162,7 +203,8 @@ export class ClaudeSession {
         if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
           this.emit({ kind: "assistant-text", text: block.text });
         } else if (block.type === "tool_use" && typeof block.name === "string") {
-          this.emit({ kind: "tool-use", name: block.name });
+          const input = block.input && typeof block.input === "object" ? (block.input as Record<string, unknown>) : {};
+          this.emit({ kind: "tool-use", name: block.name, input });
         }
       }
       return;
@@ -172,11 +214,22 @@ export class ClaudeSession {
       this.busy = false;
       const subtype = typeof event.subtype === "string" ? event.subtype : "unknown";
       const isError = event.is_error === true || subtype !== "success";
+      const u = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      const usage: TurnUsage = {
+        inputTokens: num(u?.input_tokens),
+        outputTokens: num(u?.output_tokens),
+        costUsd: num(event.total_cost_usd),
+        durationMs: num(event.duration_ms) ?? num(event.duration_api_ms),
+      };
+      this.textBlocks = 0;
+      this.blockType = null;
       this.emit({
         kind: "result",
         ok: !isError,
         text: typeof event.result === "string" ? event.result : null,
         sessionId,
+        usage,
         ...(isError ? { errorSubtype: subtype } : {}),
       });
     }
@@ -212,6 +265,7 @@ export class ClaudeSession {
               ok: event.ok,
               text: event.text ?? (collected.length ? collected.join("\n\n") : null),
               reason: event.ok ? "complete" : (event.errorSubtype ?? "error"),
+              ...(event.usage ? { usage: event.usage } : {}),
             });
           } else if (event.kind === "exit") {
             settle({

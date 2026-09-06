@@ -89,6 +89,14 @@ export interface Config {
    */
   resumeAwakeOnRestart: boolean;
   logLevel: LogLevel;
+  /**
+   * Show a reply growing in place as the runtime generates it, rather than
+   * posting it whole at the end. Needs a runtime that can emit partial messages;
+   * without one this is ignored with a warning, not an error.
+   */
+  streaming: boolean;
+  /** Minimum gap between edits to a streaming reply, so a busy turn cannot flood Discord. */
+  streamEditIntervalMs: number;
   /** Optional file the service appends its own structured log to. */
   logFile: string | null;
 }
@@ -168,6 +176,8 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
     resumeAwakeOnRestart: (env.RESUME_AWAKE_ON_RESTART?.trim() ?? "").toLowerCase() === "true",
     logLevel: logLevelRaw,
     logFile: env.LOG_FILE?.trim() || null,
+    streaming: (env.STREAMING?.trim() ?? "on").toLowerCase() !== "off",
+    streamEditIntervalMs: intOr("STREAM_EDIT_INTERVAL_MS", env, 1500),
   };
 
   // An empty allowlist is a configuration mistake, not an open door. Fail loudly

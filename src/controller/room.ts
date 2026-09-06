@@ -7,6 +7,7 @@ import type { Capabilities } from "../runtime/capabilities.ts";
 import { ClaudeSession } from "../runtime/claude.ts";
 import { parseInput, menuText, type ParsedCommand } from "./commands.ts";
 import { ambientPreamble, isDecline } from "./attention.ts";
+import { footerFor, StreamedReply, tickerFor } from "./stream.ts";
 import {
   driftNotice,
   hashBody,
@@ -70,6 +71,10 @@ export class RoomController {
   private announcedDrift: string | null = null;
   /** When the attention window closes, as an epoch time. Null means closed. */
   private attentionUntil: number | null = null;
+  /** The reply being streamed for the turn in progress, if any. */
+  private stream: StreamedReply | null = null;
+  /** Whether the streaming fallback has already been explained in the log. */
+  private streamingWarned = false;
 
   constructor(
     private readonly deps: RoomDeps,
@@ -190,6 +195,57 @@ export class RoomController {
     });
   }
 
+
+
+  // ---------------------------------------------------------------- streaming
+
+  /**
+   * Streaming needs a runtime that can emit partial messages. Without one the
+   * reply is posted whole at the end, as before, and the log says so once.
+   */
+  private streamingCapable(): boolean {
+    if (!this.deps.config.streaming) return false;
+    const capable = this.deps.caps.flags.has("--include-partial-messages");
+    if (!capable && !this.streamingWarned) {
+      this.streamingWarned = true;
+      log.warn("streaming requested but the runtime does not advertise partial messages; replies will be posted whole", {
+        channelId: this.channelId,
+      });
+    }
+    return capable;
+  }
+
+  /**
+   * Only an operator's direct message is streamed. An ambient turn may turn out
+   * not to be for this bot, and a placeholder would already be a reply to it. A
+   * peer's turn needs a real mention to reach the peer, and a mention added by
+   * edit notifies nobody, so it is posted whole with the mention on the front.
+   */
+  private shouldStream(turn: PendingTurn): boolean {
+    return (
+      turn.author === "operator" &&
+      !turn.ambient &&
+      typeof this.deps.rest.editMessage === "function" &&
+      this.streamingCapable()
+    );
+  }
+
+  private async openStream(turn: PendingTurn): Promise<StreamedReply | null> {
+    const reply = new StreamedReply(
+      this.deps.rest,
+      this.channelId,
+      turn.messageId,
+      this.deps.config.streamEditIntervalMs,
+    );
+    try {
+      await reply.open();
+      return reply;
+    } catch (error) {
+      // Losing the placeholder is not worth losing the turn over.
+      log.warn("could not open a streaming reply; posting whole instead", { channelId: this.channelId, error });
+      return null;
+    }
+  }
 
   /** How the status line describes the attention window. */
   private listeningText(): string {
@@ -662,7 +718,10 @@ export class RoomController {
       effort,
       permissionMode,
       permissionPrompts: this.deps.config.permissionPrompts,
+      partial: this.streamingCapable(),
       onEvent: (event) => {
+        if (event.kind === "text-delta") this.stream?.append(event.text);
+        if (event.kind === "tool-use") this.stream?.ticker(tickerFor(event.name, event.input));
         if (event.kind === "stderr") log.warn("runtime stderr", { channelId: this.channelId, text: event.text });
         if (event.kind === "parse-error") log.warn("runtime emitted unparseable output", { line: event.line });
         if (event.kind === "exit" && !event.expected) {
@@ -697,13 +756,24 @@ export class RoomController {
       if (built.notice) await this.say(built.notice);
 
       const session = await this.ensureSession(turn.author);
-      const outcome = await session.runTurn(built.prompt);
 
+      // A streamed reply is opened before the runtime is asked anything, so the
+      // placeholder is on screen within a moment of the turn starting.
+      const streamed = this.shouldStream(turn) ? await this.openStream(turn) : null;
+      const started = Date.now();
+      this.stream = streamed;
+      let outcome;
+      try {
+        outcome = await session.runTurn(built.prompt);
+      } finally {
+        this.stream = null;
+      }
 
       if (outcome.reason === "interrupted") {
         // Checked first, and deliberately. A task killed mid-sentence may have
         // already produced partial output; posting it after "Task interrupted"
         // contradicts the message the operator just read. Stop means stop.
+        if (streamed) await streamed.interrupted();
       } else if (outcome.text?.trim() && turn.ambient && isDecline(outcome.text)) {
         // The runtime read the room and decided the message was not for it.
         // Nothing is posted, and the attention window is deliberately NOT
@@ -718,14 +788,21 @@ export class RoomController {
         // rather than only on a mention. A turn can take half a minute; a window
         // measured from the mention would shut before its own reply arrived.
         this.openAttention();
-        // Addressed back to a peer so the reply reaches it. A peer that is
-        // mention-gated - as this one is - hears nothing otherwise, and the
-        // conversation ends after a single turn.
-        await this.say(outcome.text.trim(), turn.messageId, turn.author === "peer" ? turn.authorId : null);
+        if (streamed) {
+          await streamed.finish(outcome.text.trim(), footerFor(Date.now() - started, outcome.usage));
+        } else {
+          // Addressed back to a peer so the reply reaches it. A peer that is
+          // mention-gated - as this one is - hears nothing otherwise, and the
+          // conversation ends after a single turn.
+          await this.say(outcome.text.trim(), turn.messageId, turn.author === "peer" ? turn.authorId : null);
+        }
       } else if (outcome.ok) {
-        await this.say("Finished, and the runtime returned nothing to show.");
+        const text = "Finished, and the runtime returned nothing to show.";
+        if (streamed) await streamed.fail(text);
+        else await this.say(text);
       } else {
-        await this.say(this.failureText(outcome.reason));
+        if (streamed) await streamed.fail(this.failureText(outcome.reason));
+        else await this.say(this.failureText(outcome.reason));
       }
 
       // A process that died on its own cannot be reused; the next turn respawns
@@ -736,7 +813,11 @@ export class RoomController {
       }
     } catch (error) {
       log.error("turn failed", { channelId: this.channelId, error });
-      await this.say(`That turn failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      const text = `That turn failed: ${error instanceof Error ? error.message : "unknown error"}`;
+      const open = this.stream;
+      this.stream = null;
+      if (open) await open.fail(text);
+      else await this.say(text);
     } finally {
       this.running = false;
       this.setState(this.currentServiceState());

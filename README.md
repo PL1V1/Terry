@@ -203,6 +203,41 @@ Some deliberate edges:
 - Accepting is a room control, not a registry edit: it authors nothing, it only
   chooses which version a running conversation is held to. Peers cannot run it.
 
+## Streaming
+
+A turn can take a minute. For that minute the room used to show nothing, and
+nothing looks the same whether the bot is working or dead.
+
+Now a placeholder is posted the moment a turn starts and **edited in place** as
+text arrives, so the reply grows on screen. A small ticker line above it says
+what the runtime is doing — `reading src/auth.ts`, `running bun test` — and a
+footer under the finished reply says what it cost: `47 s · 31k in / 2k out ·
+$0.18`.
+
+```sh
+STREAMING=on                 # off restores post-at-end
+STREAM_EDIT_INTERVAL_MS=1500 # minimum gap between edits
+```
+
+Edits are coalesced onto a trailing timer and an edit whose content matches the
+last is skipped, because Discord rate-limits edits harder than sends. A reply
+that outgrows one message is frozen at a paragraph boundary and continues in a
+new one; a code block cut across the boundary is closed on one side and
+reopened on the other. Interrupting a streaming turn leaves only
+`Task interrupted.` on screen — the partial text is removed, consistent with the
+rule that partial output is never posted.
+
+Two kinds of turn are deliberately **not** streamed:
+
+- **A peer's.** The reply needs a real mention to reach the peer, and a mention
+  added by edit notifies nobody. It is posted whole with the mention on the
+  front, as before.
+- **An overheard one.** It may turn out not to be for Terry at all, and a
+  placeholder would already be a reply to it.
+
+Needs a runtime that advertises `--include-partial-messages`. Without one,
+replies are posted whole and the log says so once.
+
 ## Ambient listening
 
 Terry answers a message that addresses him directly. He will also listen to what

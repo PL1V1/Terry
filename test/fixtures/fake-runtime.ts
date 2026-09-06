@@ -15,6 +15,7 @@
  *   __CRASH__ exits without producing a result
  *   __ECHOPROMPT__ echoes the entire prompt, so a test can see what was sent
  *   __DECLINE__ replies with exactly the ambient not-for-me sentinel
+ *   __STREAM__ / __LONG__ / __TOOLS__ / __STREAM_HANG__  stream partial text first
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -133,6 +134,53 @@ for await (const chunk of Bun.stdin.stream()) {
         message: { role: "assistant", content: [{ type: "text", text: "__NOT_FOR_ME__" }] },
       });
       emit({ type: "result", subtype: "success", is_error: false, result: "__NOT_FOR_ME__", session_id: sessionId });
+      continue;
+    }
+
+
+    // Streams the reply as partial-message events before the complete assistant
+    // message, the way the real runtime does with --include-partial-messages.
+    // __STREAM__ streams a short reply; __LONG__ a reply well over one Discord
+    // message; __TOOLS__ announces a tool call first; __STREAM_HANG__ streams a
+    // little and then hangs, so a test can interrupt it mid-stream.
+    if (text.includes("__STREAM__") || text.includes("__LONG__") || text.includes("__TOOLS__") || text.includes("__STREAM_HANG__")) {
+      const paragraph = "The quick brown fox jumps over the lazy dog, and then does it again because nobody was watching the first time.";
+      let full = text.includes("__LONG__")
+        ? Array.from({ length: 48 }, (_, i) => `Paragraph ${i + 1}. ${paragraph}`).join("\n\n") + "\n\n```ts\nconst x = 1;\nconst y = 2;\n```\n\nThe end."
+        : "Streamed reply: all done, guv.";
+      if (text.includes("__TOOLS__")) {
+        emit({
+          type: "assistant",
+          session_id: sessionId,
+          message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "src/auth.ts" } }] },
+        });
+        await Bun.sleep(30);
+      }
+      const streamEvent = (event: Record<string, unknown>): void => emit({ type: "stream_event", session_id: sessionId, event });
+      streamEvent({ type: "message_start", message: { role: "assistant", content: [] } });
+      streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+      const words = full.split(/(?<=\s)/);
+      const step = Math.max(1, Math.floor(words.length / 40));
+      for (let i = 0; i < words.length; i += step) {
+        streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: words.slice(i, i + step).join("") } });
+        await Bun.sleep(5);
+        if (text.includes("__STREAM_HANG__") && i >= step * 3) {
+          await Bun.sleep(30_000);
+        }
+      }
+      streamEvent({ type: "content_block_stop", index: 0 });
+      streamEvent({ type: "message_stop" });
+      emit({ type: "assistant", session_id: sessionId, message: { role: "assistant", content: [{ type: "text", text: full }] } });
+      emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: full,
+        session_id: sessionId,
+        duration_ms: 47_000,
+        total_cost_usd: 0.18,
+        usage: { input_tokens: 31_000, output_tokens: 2_000 },
+      });
       continue;
     }
 

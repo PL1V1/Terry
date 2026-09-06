@@ -72,6 +72,13 @@ Anything else addressed to Terry while awake is a turn in the conversation.
 **Queueing.** A message arriving while a turn is running is queued, and Terry says
 how many are waiting. The queue drains in order.
 
+**Streaming.** A placeholder is posted the moment a turn starts and edited in
+place as text arrives, with a ticker line naming what the runtime is doing and a
+footer saying what the turn cost. Edits are coalesced; overflow continues in a
+new message with code fences kept balanced. Peer turns and overheard turns are
+posted whole instead — a mention added by edit notifies nobody, and a placeholder
+would already be a reply to something that may not be for him.
+
 **Interruption.** The runtime has no in-band interrupt, so `stop` and `sleep` kill
 the process. A turn killed mid-sentence may already have produced partial output;
 that output is **discarded**, because posting it after "Task interrupted" would
@@ -350,6 +357,8 @@ bun run migrate:down     # roll back the most recent
 | `DEFAULT_INSTRUCTION_KEYS` | Keys a room inherits when it declares none. |
 | `INSTRUCTION_DRIFT_POLICY` | `hold` (default), `live`, or `off`. |
 | `HISTORY_LIMIT` | Background context messages. Default 25. |
+| `STREAMING` | Show a reply growing in place. Default on; `off` restores post-at-end. |
+| `STREAM_EDIT_INTERVAL_MS` | Minimum gap between streaming edits. Default 1500. |
 | `ATTENTION_WINDOW_SECONDS` | How long an awake room keeps listening after being spoken to. Default 90; 0 disables. |
 | `RESUME_AWAKE_ON_RESTART` | Whether a restart leaves awake rooms awake. Default off. |
 | `DATABASE_PATH` | Default `./data/terry.sqlite`. |
