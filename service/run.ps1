@@ -57,6 +57,47 @@ try {
   # command lines is blind to exactly the process it needs to see. An
   # exclusively opened file works across sessions, needs no privileges, and is
   # released by the OS if the process dies without cleaning up.
+
+  # Reap orphaned instances before taking the lock.
+  #
+  # Stopping the scheduled task terminates this launcher but not the bun child
+  # underneath it, which carries on in session 0 with the same token and the same
+  # database. The next start then adds a second, and every message reaches the
+  # runtime once per copy. Five restarts in an afternoon produced five copies.
+  #
+  # From an interactive session those processes can neither be identified nor
+  # terminated. From here they can: this launcher runs in the same session under
+  # the same token. And when the scheduler starts this launcher, no legitimate
+  # instance can exist - the task does not double-start - so every service
+  # process found here is by definition a stray, along with the runtime processes
+  # it spawned.
+  $reaped = @()
+  $all = Get-CimInstance Win32_Process
+  $strays = $all | Where-Object {
+    $_.Name -eq "bun.exe" -and $_.ProcessId -ne $PID -and
+    ($_.CommandLine -like "*src\index.ts*" -or $_.CommandLine -like "*src/index.ts*")
+  }
+  foreach ($stray in $strays) {
+    # Descendants first, so a runtime process is not left behind when its parent goes.
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    $queue.Enqueue([int]$stray.ProcessId)
+    $tree = @()
+    while ($queue.Count -gt 0) {
+      $current = $queue.Dequeue()
+      $tree += $current
+      $all | Where-Object { $_.ParentProcessId -eq $current } | ForEach-Object { $queue.Enqueue([int]$_.ProcessId) }
+    }
+    [array]::Reverse($tree)
+    foreach ($id in $tree) {
+      try { Stop-Process -Id $id -Force -ErrorAction Stop; $reaped += $id }
+      catch { Write-Utf8 $errorLog ("=== could not reap {0}: {1}`r`n" -f $id, $_.Exception.Message) }
+    }
+  }
+  if ($reaped.Count -gt 0) {
+    Write-Utf8 $errorLog ("=== reaped orphaned instance(s) {0}: pids {1}`r`n`r`n" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), ($reaped -join ", "))
+    Start-Sleep -Seconds 2
+  }
+
   $lockPath = Join-Path $logDir "terry.lock"
   try {
     $lock = [System.IO.File]::Open(
