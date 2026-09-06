@@ -1,4 +1,4 @@
-import type { Rest } from "../discord/rest.ts";
+import type { MessageTransport } from "../discord/rest.ts";
 import type { DiscordMessage } from "../discord/gateway.ts";
 import { log } from "../log.ts";
 
@@ -49,7 +49,7 @@ export function renderHistory(messages: DiscordMessage[]): string {
 
 /** Fetches recent channel messages in chronological order. */
 export async function fetchHistory(
-  rest: Rest,
+  rest: MessageTransport,
   channelId: string,
   options: HistoryOptions,
 ): Promise<DiscordMessage[]> {

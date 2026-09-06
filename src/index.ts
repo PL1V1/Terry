@@ -137,7 +137,6 @@ async function main(): Promise<void> {
           config,
           repo,
           rest,
-          presence,
           caps,
           botId,
           onActivity: (state, activity) => aggregator?.report(key, state, activity),

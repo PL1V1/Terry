@@ -45,7 +45,23 @@ export interface SentMessage {
   channel_id: string;
 }
 
-export class Rest {
+/**
+ * The message operations the controller depends on.
+ *
+ * Declared as an interface so a room can be driven by something other than the
+ * live Discord API — the acceptance harness supplies its own implementation and
+ * exercises the real controller.
+ */
+export interface MessageTransport {
+  sendMessage(
+    channelId: string,
+    text: string,
+    options?: { replyTo?: string; allowMentions?: boolean },
+  ): Promise<SentMessage[]>;
+  recentMessages(channelId: string, limit: number): Promise<unknown[]>;
+}
+
+export class Rest implements MessageTransport {
   constructor(private readonly token: string) {}
 
   private async request<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {

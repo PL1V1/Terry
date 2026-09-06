@@ -1,8 +1,8 @@
 import type { Config } from "../config.ts";
 import type { Repo, Room } from "../db/repo.ts";
-import type { Rest } from "../discord/rest.ts";
+import type { MessageTransport } from "../discord/rest.ts";
 import type { DiscordMessage } from "../discord/gateway.ts";
-import type { PresenceController, ServiceState } from "../discord/presence.ts";
+import type { ServiceState } from "../discord/presence.ts";
 import type { Capabilities } from "../runtime/capabilities.ts";
 import { ClaudeSession } from "../runtime/claude.ts";
 import { parseInput, menuText, type ParsedCommand } from "./commands.ts";
@@ -12,8 +12,7 @@ import { log } from "../log.ts";
 export interface RoomDeps {
   config: Config;
   repo: Repo;
-  rest: Rest;
-  presence: PresenceController;
+  rest: MessageTransport;
   caps: Capabilities;
   botId: string;
   /** Reports this room's activity so the service can drive presence. */
@@ -387,12 +386,15 @@ export class RoomController {
     this.setState("working");
 
     try {
-      const session = await this.ensureSession();
+      // The prompt is assembled first: a turn that is going to be refused
+      // should never cost a runtime process.
       const built = await this.buildPrompt(turn);
       if ("error" in built) {
         await this.say(built.error, turn.messageId);
         return;
       }
+
+      const session = await this.ensureSession();
       const outcome = await session.runTurn(built.prompt);
 
       // The history block is only ever sent once per conversation.
