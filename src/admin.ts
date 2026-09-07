@@ -4,6 +4,7 @@
  * Deliberately a local, on-the-machine tool: instructions and preferences are
  * changed here, never from a Discord message.
  */
+import type { Database } from "bun:sqlite";
 import { openDatabase } from "./db/index.ts";
 import { migrateUp } from "./db/migrate.ts";
 import { Repo } from "./db/repo.ts";
@@ -35,12 +36,45 @@ Rooms
   room new-session <guildId> <channelId>  retire its conversation and start a fresh one
   room history  <guildId> <channelId>
 
+Export
+  export --out <path>   dump every table as terry-export v1 JSON, for the
+                         ESPER consolidation exporter. Read-only; changes
+                         nothing. Run only against a quiesced database - stop
+                         the service first, so the snapshot is not missing
+                         anything written after it was taken.
+
 The database is taken from DATABASE_PATH (default ./data/terry.sqlite).
 `;
+
+/** Tables carried in a terry-export snapshot, in the order they are written. */
+const EXPORT_TABLES = [
+  "rooms",
+  "session_history",
+  "processed_events",
+  "instructions",
+  "room_instructions",
+  "instruction_pins",
+  "schema_migrations",
+] as const;
 
 interface Flags {
   positional: string[];
   named: Record<string, string | boolean>;
+}
+
+/**
+ * Reads every export table in one read transaction, so the snapshot reflects
+ * a single point in time even under WAL with a writer active concurrently.
+ */
+export function readExportTables(db: Database): Record<string, unknown[]> {
+  const read = db.transaction(() => {
+    const tables: Record<string, unknown[]> = {};
+    for (const table of EXPORT_TABLES) {
+      tables[table] = db.query(`SELECT * FROM ${table}`).all();
+    }
+    return tables;
+  });
+  return read.deferred();
 }
 
 export function parseArgs(argv: string[]): Flags {
@@ -249,6 +283,26 @@ async function main(): Promise<void> {
         for (const row of history) console.log(`${row.retired_at}\t${row.session_id}\t${row.reason}`);
         return;
       }
+    }
+
+    if (group === "export") {
+      const outPath = named.out;
+      if (typeof outPath !== "string") fail("export needs --out <path>");
+
+      const tables: Record<string, unknown[]> = {};
+      for (const table of EXPORT_TABLES) {
+        tables[table] = db.query(`SELECT * FROM ${table}`).all();
+      }
+      const snapshot = { format: "terry-export", version: 1, tables };
+      await Bun.write(outPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+
+      const counts = EXPORT_TABLES.map((t) => `${t}=${tables[t]!.length}`).join(", ");
+      console.log(`Wrote ${outPath} (${counts}).`);
+      console.log(
+        "This is only trustworthy as a migration source if the service was stopped before this ran - " +
+          "otherwise anything written since is missing from it.",
+      );
+      return;
     }
 
     console.log(USAGE);
