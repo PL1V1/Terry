@@ -58,7 +58,7 @@ describe("readExportTables", () => {
     expect(tables.schema_migrations!.length).toBeGreaterThan(0);
   });
 
-  test("represents one consistent snapshot even when a writer commits mid-read", () => {
+  test("readExportTables itself is immune to a write committed between two of its reads", () => {
     const path = join(tmpdir(), `terry-admin-test-${randomUUID()}.sqlite`);
     const writer = openDatabase(path);
     migrateUp(writer);
@@ -70,35 +70,45 @@ describe("readExportTables", () => {
       "INSERT INTO instructions (key, scope, scope_id, body) VALUES (?, ?, ?, ?)",
     ).run("before", "global", "", "seeded before the export snapshot");
 
+    // A second connection to the same file, standing in for a live writer -
+    // exactly as `export` and the running service would be two connections
+    // to the same on-disk database.
     const reader = new Database(path);
 
     try {
-      // Manually drive the same BEGIN DEFERRED -> read -> ... -> COMMIT shape
-      // readExportTables uses, so a write can be interleaved between two of
-      // its reads - which calling readExportTables as a black box, in one
-      // synchronous call, would not let this test do.
-      reader.exec("BEGIN DEFERRED");
-      const roomsAtSnapshot = reader.query("SELECT * FROM rooms").all();
+      // readExportTables reads EXPORT_TABLES in order: rooms first, then
+      // session_history. Wrapping the reader's own `query` lets a write land
+      // from the *other* connection exactly between those two reads, inside
+      // readExportTables's real transaction - not a hand-rolled stand-in for
+      // it. If readExportTables's `.transaction(...).deferred()` is ever
+      // removed, this write leaks into the `rooms` table read by the fresh
+      // check below having already run before the export finishes, and the
+      // `instructions` assertion below fails.
+      const originalQuery = reader.query.bind(reader);
+      let interleaved = false;
+      reader.query = ((sql: string) => {
+        if (!interleaved && sql.includes("session_history")) {
+          interleaved = true;
+          writer.query(
+            "INSERT INTO rooms (guild_id, channel_id, state, session_id) VALUES (?, ?, ?, ?)",
+          ).run("g", "after", "awake", "sess-2");
+          writer.query(
+            "INSERT INTO instructions (key, scope, scope_id, body) VALUES (?, ?, ?, ?)",
+          ).run("after", "global", "", "written during the export");
+        }
+        return originalQuery(sql);
+      }) as typeof reader.query;
 
-      // Committed by a second connection after the reader's snapshot is
-      // already locked in, but before the reader has read every table.
-      writer.query(
-        "INSERT INTO rooms (guild_id, channel_id, state, session_id) VALUES (?, ?, ?, ?)",
-      ).run("g", "after", "awake", "sess-2");
-      writer.query(
-        "INSERT INTO instructions (key, scope, scope_id, body) VALUES (?, ?, ?, ?)",
-      ).run("after", "global", "", "written during the export");
+      const tables = readExportTables(reader);
 
-      const instructionsAtSnapshot = reader.query("SELECT * FROM instructions").all();
-      reader.exec("COMMIT");
+      expect(interleaved).toBe(true); // the interleave actually fired mid-export
+      expect(tables.rooms).toHaveLength(1);
+      expect(tables.instructions).toHaveLength(1);
+      expect((tables.instructions![0] as { key: string }).key).toBe("before");
 
-      expect(roomsAtSnapshot).toHaveLength(1);
-      expect(instructionsAtSnapshot).toHaveLength(1);
-      expect((instructionsAtSnapshot[0] as { key: string }).key).toBe("before");
-
-      // The concurrent write is real and visible to a fresh read afterwards -
-      // it just must not have leaked into the snapshot taken above.
-      const roomsAfterCommit = reader.query("SELECT * FROM rooms").all();
+      // The concurrent write is real and visible afterwards - it just must
+      // not have leaked into the snapshot readExportTables returned above.
+      const roomsAfterCommit = originalQuery("SELECT * FROM rooms").all();
       expect(roomsAfterCommit).toHaveLength(2);
     } finally {
       reader.close();

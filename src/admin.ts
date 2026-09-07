@@ -289,10 +289,7 @@ async function main(): Promise<void> {
       const outPath = named.out;
       if (typeof outPath !== "string") fail("export needs --out <path>");
 
-      const tables: Record<string, unknown[]> = {};
-      for (const table of EXPORT_TABLES) {
-        tables[table] = db.query(`SELECT * FROM ${table}`).all();
-      }
+      const tables = readExportTables(db);
       const snapshot = { format: "terry-export", version: 1, tables };
       await Bun.write(outPath, `${JSON.stringify(snapshot, null, 2)}\n`);
 
